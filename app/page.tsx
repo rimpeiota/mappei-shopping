@@ -49,6 +49,8 @@ export default function Home() {
   const [quick, setQuick] = useState('');
   const [listening, setListening] = useState(false);
   const [aiPending, setAiPending] = useState(0);
+  const [aiCheck, setAiCheck] = useState('');
+  const [aiChecking, setAiChecking] = useState(false);
   const [editing, setEditing] = useState<ShoppingItem | null>(null);
   const [modal, setModal] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; undo?: ShoppingState; key: number } | null>(null);
@@ -124,6 +126,15 @@ export default function Home() {
     } catch { /* The captured local memo remains intact. */ }
     finally { setAiPending(n => Math.max(0, n - 1)); }
   };
+  const checkAi = async () => {
+    setAiChecking(true); setAiCheck('');
+    try {
+      const response = await fetch('/api/parse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '牛乳2本、卵1パック' }) });
+      const result = await response.json() as { engine?: string; message?: string; error?: string };
+      setAiCheck(response.ok && result.engine === 'workers-ai' ? 'Workers AIの応答を確認しました' : result.message || result.error || '接続を確認できませんでした');
+    } catch { setAiCheck('接続を確認できませんでした。通信状態を確認してください。'); }
+    finally { setAiChecking(false); }
+  };
   const speech = () => {
     if (listening) { recognition.current?.stop(); setListening(false); return; }
     const browser = window as unknown as { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition };
@@ -170,6 +181,11 @@ export default function Home() {
         {mode === 'favorites' && favorites.length > 0 && <p className="field-note">商品の右フリック、または詳細の「もう一度追加」からリストに追加できます。</p>}
       </>}
       {mode === 'settings' && <div className="settings-panel"><div className="settings-section glass"><div className="section-heading"><h3><Cloud size={17} />保存と同期</h3><span className={`connection-badge ${authenticated ? 'connected' : ''}`}>{authenticated ? '接続済み' : '未ログイン'}</span></div><div className="setting-line"><div><b>この端末</b><small>{storageError ? '保存エラー' : '変更を自動保存'}</small></div><Check size={17} className={storageError ? 'text-coral' : 'text-green'} /></div><div className="setting-line"><div><b>Cloudflare D1</b><small>{syncLabels[status]}</small></div>{authenticated ? <button className="button secondary small" onClick={() => void retry()}><RefreshCw size={14} />同期</button> : <a className="button secondary small" href="/signin-with-chatgpt?return_to=/">ログイン<ArrowUpRight size={14} /></a>}</div>{!authenticated && <p className="field-note">未ログインのメモはこの端末に保存されます。クラウド同期・AI補完・添付の保存にはログインが必要です。</p>}</div>
+      <div className="settings-section glass">
+        <div className="section-heading"><h3><Sparkles size={17} />AI補完</h3><span className="connection-badge">{capability.ai === 'configured' ? '設定済み' : '未設定'}</span></div>
+        <div className="setting-line"><span>Workers AI</span><button className="button secondary small" disabled={!authenticated || aiChecking} onClick={() => void checkAi()}>{aiChecking ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}AI接続を確認</button></div>
+        {aiCheck && <p className="field-note" role="status">{aiCheck}</p>}
+      </div>
       <div className="settings-section glass"><div className="section-heading"><h3><SlidersHorizontal size={17} />表示と入力</h3></div><label className="setting-line"><span>表示名</span><input aria-label="表示名" value={state.settings.name} placeholder="マイリスト" onChange={e => commit(old => ({ ...old, settings: { ...old.settings, name: e.target.value } }))} /></label><label className="setting-line"><span>よく使う購入先</span><input aria-label="よく使う購入先" value={state.settings.defaultStore} placeholder="未設定" onChange={e => commit(old => ({ ...old, settings: { ...old.settings, defaultStore: e.target.value } }))} /></label><label className="setting-line"><span>買い物予算</span><div className="setting-number"><input type="number" min="0" aria-label="買い物予算" value={state.settings.budget || ''} placeholder="未設定" onChange={e => commit(old => ({ ...old, settings: { ...old.settings, budget: Math.max(0, Number(e.target.value)) } }))} /><small>円</small></div></label><label className="setting-line"><div><b>アニメーションを減らす</b><small>端末の設定も優先します</small></div><input className="switch" type="checkbox" checked={state.settings.reducedMotion} onChange={e => commit(old => ({ ...old, settings: { ...old.settings, reducedMotion: e.target.checked } }))} /></label></div>
       <div className="settings-section glass"><div className="section-heading"><h3><ArrowDownToLine size={17} />バックアップと連携</h3></div><button className="setting-action" onClick={() => exportFile(`shopping-${TODAY()}.json`, JSON.stringify(state, null, 2), 'application/json')}><span><b>バックアップを書き出す</b><small>全記録・設定をJSONで保存</small></span><ArrowDownToLine size={18} /></button><button className="setting-action" onClick={() => fileRef.current?.click()}><span><b>バックアップを読み込む</b><small>内容を確認してから復元</small></span><FileUp size={18} /></button><button className="setting-action" onClick={() => exportFile(`買い物リスト-${TODAY()}.md`, markdown(), 'text/markdown')}><span><b>Obsidian用Markdownを書き出す</b><small>自動同期は未接続</small></span><ArrowUpRight size={18} /></button><button className="setting-action" onClick={() => setModal('import')}><span><b>既存の買い物ノートを読み込む</b><small>チェックリスト形式・テキスト・JSON</small></span><ChevronRight size={18} /></button></div>
       <div className="settings-section glass"><div className="section-heading"><h3><Layers size={17} />接続状況</h3></div>{['家族との共有・権限・通知', '価格取得・価格アラート', '位置情報による店舗通知', '画像・レシートの文字抽出', 'Obsidianとの自動同期'].map(name => <div className="setting-line" key={name}><span>{name}</span><span className="connection-badge">未接続</span></div>)}<button className="setting-action" onClick={() => setModal('diagnostics')}><span>技術・APIの接続診断</span><ChevronRight size={17} /></button></div>

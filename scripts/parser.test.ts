@@ -38,3 +38,7 @@ test("an empty AI item list is rejected", () => {
 test("a valid parsed item passes AI result validation", () => {
   assert.equal(validateParsedItems(parseShoppingText("牛乳2本"))?.length, 1);
 });
+test("an optional null store is omitted without rejecting valid AI items", () => {
+  assert.deepEqual(validateParsedItems([{ name: "牛乳", quantity: 2, unit: "本", category: "食品", store: null }]),
+    [{ name: "牛乳", quantity: 2, unit: "本", category: "食品" }]);
+});

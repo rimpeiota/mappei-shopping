@@ -85,7 +85,7 @@ export function validateParsedItems(value: unknown): ParsedItem[] | null {
       || typeof item.quantity !== "number" || !Number.isFinite(item.quantity) || item.quantity <= 0 || item.quantity > 1_000_000
       || typeof item.unit !== "string" || !item.unit.trim() || item.unit.length > 20
       || typeof item.category !== "string" || !categories.has(item.category)
-      || (item.store !== undefined && (typeof item.store !== "string" || item.store.length > 60))) return null;
+      || (item.store !== undefined && item.store !== null && (typeof item.store !== "string" || item.store.length > 60))) return null;
     items.push({ name: item.name.trim(), quantity: item.quantity, unit: item.unit.trim(), category: item.category as ParsedItem["category"],
       ...(typeof item.store === "string" && item.store.trim() ? { store: item.store.trim() } : {}) });
   }
