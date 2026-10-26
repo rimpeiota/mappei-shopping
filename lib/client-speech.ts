@@ -1,4 +1,9 @@
 /** Browser-independent lifecycle management for one Web Speech recognition session. */
+/** Prefer the existing recording/transcription path on Chrome for iPhone/iPad. */
+export function prefersRecordedSpeech(userAgent: string): boolean {
+  return /\b(?:iPhone|iPad|iPod)\b/iu.test(userAgent) && /\bCriOS\/[\d.]+/u.test(userAgent);
+}
+
 export type SpeechPhase = 'starting' | 'listening' | 'stopping' | 'idle';
 
 export interface SpeechResultEvent {

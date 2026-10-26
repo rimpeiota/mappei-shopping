@@ -1,10 +1,11 @@
 'use client';
-import { useEffect, useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import { Mic, MicOff, Plus, Sparkles, X } from 'lucide-react';
-import { startSpeechSession, type SpeechRecognizer } from '@/lib/client-speech';
+import { prefersRecordedSpeech, startSpeechSession, type SpeechRecognizer } from '@/lib/client-speech';
 
 type VoicePhase = 'idle' | 'starting' | 'listening' | 'stopping' | 'permission' | 'recording' | 'transcribing';
 const MAX_AUDIO = 8 * 1024 * 1024;
+const noDeviceEvents = () => () => {};
 const errorMessages: Record<string, string> = {
   unsupported: 'このブラウザでは直接の音声認識を使えません。下の「録音して文字にする」か、キーボードのマイクを使ってください。',
   'not-allowed': 'マイクの利用が許可されていません。ブラウザのサイト設定でマイクを許可してから、もう一度お試しください。',
@@ -22,10 +23,11 @@ const captions: Record<VoicePhase, string> = {
   transcribing: '音声を文字にしています…',
 };
 
-export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, authenticated, scope }: {
+export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, scope }: {
   value: string; onChange: Dispatch<SetStateAction<string>>; onSubmit: () => void;
-  inputRef: RefObject<HTMLTextAreaElement | null>; aiPending: number; authenticated: boolean; scope: string;
+  inputRef: RefObject<HTMLTextAreaElement | null>; aiPending: number; scope: string;
 }) {
+  const recordByDefault = useSyncExternalStore(noDeviceEvents, () => prefersRecordedSpeech(navigator.userAgent), () => false);
   const [phase, setPhase] = useState<VoicePhase>('idle');
   const [error, setError] = useState('');
   const [interim, setInterim] = useState('');
@@ -93,7 +95,6 @@ export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, 
     } catch { fail('音声入力を開始できませんでした。下の録音か、キーボードのマイクをお試しください。'); }
   };
   const transcribe = async (audio: Blob) => {
-    if (!authenticated) { fail('録音の文字起こしにはサインインが必要です。キーボードのマイクからも入力できます。'); return; }
     if (!navigator.onLine) { fail('文字起こしには通信が必要です。接続後に再試行できます。'); setRetryAudio(audio); return; }
     if (!audio.size || audio.size > MAX_AUDIO) { fail('音声は8MB以下で、短く録音してください。'); return; }
     const id = ++generation.current, owner = scope;
@@ -116,7 +117,6 @@ export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, 
   };
   const startRecording = async () => {
     cancel(); setError(''); setRetryAudio(null); setHelp(true);
-    if (!authenticated) { fail('録音の文字起こしにはサインインが必要です。キーボードのマイクからも入力できます。'); return; }
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') { fail('このブラウザでは録音できません。SafariやChromeで直接開くか、キーボードのマイクを使ってください。'); return; }
     const id = generation.current, owner = scope;
     const valid = () => generation.current === id && currentScope.current === owner;
@@ -163,12 +163,13 @@ export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, 
           if (phase === 'recording') { recorder.current?.stop(); releaseMicrophone(); }
           else if (phase === 'starting' || phase === 'permission') cancel();
           else if (phase === 'listening') session.current?.stop();
+          else if (recordByDefault || prefersRecordedSpeech(navigator.userAgent)) void startRecording();
           else startBrowser();
         }}>{active ? <MicOff size={19} /> : <Mic size={19} />}</button>
         <button type="submit" className="add-button" disabled={!value.trim()} aria-label="リストに追加"><Plus size={18} /><span>追加</span></button>
       </div>
     </form>
-    <div className="composer-caption" role="status"><span>{captions[phase]}</span>{aiPending > 0 && <span> · AI補完中</span>}</div>
+    <div className="composer-caption" role="status"><span>{phase === 'idle' && recordByDefault ? '録音はCloudflareで文字に変換 · 入力は端末に即時保存' : captions[phase]}</span>{aiPending > 0 && <span> · AI補完中</span>}</div>
     {interim && <p className="voice-interim" aria-live="polite">{interim}</p>}
     {help && <section className="voice-help" aria-label="音声入力の案内">
       <div className="voice-help-heading"><strong>音声入力</strong><button type="button" className="icon-button" aria-label="音声入力の案内を閉じる" onClick={() => { cancel(); setHelp(false); setError(''); setRetryAudio(null); }}><X size={18} /></button></div>
@@ -179,10 +180,10 @@ export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, 
         <button type="button" className="button secondary" disabled={active} onClick={() => fileRef.current?.click()}>音声ファイルから入力</button>
         {retryAudio && phase === 'idle' && <button type="button" className="button secondary" onClick={() => void transcribe(retryAudio)}>文字起こしを再試行</button>}
         {active && <button type="button" className="text-button" onClick={cancel}>キャンセル</button>}
-        <button type="button" className="text-button" disabled={active} onClick={startBrowser}>ブラウザの音声認識を再試行</button>
+        {!recordByDefault && <button type="button" className="text-button" disabled={active} onClick={startBrowser}>ブラウザの音声認識を再試行</button>}
         <button type="button" className="text-button" onClick={() => { cancel(); inputRef.current?.focus(); }}>キーボードで入力</button>
       </div>
-      <details><summary>マイク設定の確認方法</summary><p>サイト設定の「マイク」を許可してください。iPhoneではSafariやChromeでアプリのURLを直接開いて試してください。Safariの音声認識にはSiri・音声入力の設定も関係します。端末のキーボードにあるマイクからも入力できます。</p></details>
+      <details><summary>マイク設定の確認方法</summary><p>iPhoneのChromeでは「設定」→「アプリ」→「Chrome」→「マイク」をオンにし、このサイトの許可画面でもマイクを許可してください。以前に拒否した場合は、Chromeのアドレスバー左側のマイクアイコンからサイトの権限も確認できます。端末のキーボードにあるマイクからも入力できます。</p><a href="https://support.google.com/chrome/answer/2693767?hl=ja&co=GENIE.Platform%3DiOS" target="_blank" rel="noopener noreferrer">Chromeの公式マイク設定ガイド</a></details>
     </section>}
     <input ref={fileRef} type="file" className="hidden-file" aria-label="文字起こし用の音声ファイル" accept="audio/webm,audio/mp4,audio/m4a,audio/x-m4a,audio/wav,audio/x-wav,audio/mpeg,audio/ogg,.m4a,.wav,.webm,.mp3,.ogg" onChange={event => { const audio = event.target.files?.[0]; if (audio) { cancel(); setHelp(true); void transcribe(audio); } event.target.value = ''; }} />
   </div>;

@@ -1,7 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { SpeechCallbacks, SpeechClock, SpeechPhase, SpeechRecognizer, SpeechResultEvent } from '../lib/client-speech';
-const { startSpeechSession } = await import(new URL('../lib/client-speech.ts', import.meta.url).href) as typeof import('../lib/client-speech');
+const { prefersRecordedSpeech, startSpeechSession } = await import(new URL('../lib/client-speech.ts', import.meta.url).href) as typeof import('../lib/client-speech');
+
+test('Chrome on iPhone/iPad selects recording while Safari, Android, and desktop keep browser recognition', () => {
+  assert.equal(prefersRecordedSpeech('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/140.0.0.0 Mobile/15E148 Safari/604.1'), true);
+  assert.equal(prefersRecordedSpeech('Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 CriOS/140.0.0.0 Mobile/15E148 Safari/604.1'), true);
+  for (const userAgent of [
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Linux; Android 15) Chrome/140.0.0.0 Mobile Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Chrome/140.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) FxiOS/140.0 Mobile/15E148 Safari/605.1.15',
+    '',
+  ]) assert.equal(prefersRecordedSpeech(userAgent), false);
+});
 
 class FakeClock implements SpeechClock {
   now = 0;
