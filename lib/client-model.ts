@@ -37,15 +37,50 @@ export function guessCategory(name: string): string {
   return 'その他';
 }
 export function normalize(text: string) { return text.normalize('NFKC').toLowerCase().replace(/[\sー・･]/g, '').replace(/てぃっしゅ/g, 'ティッシュ').replace(/ぎゅうにゅう/g, '牛乳'); }
+export const LINK_NAME_PLACEHOLDER = '商品名を入力';
+export function itemLink(item: Pick<ShoppingItem, 'name' | 'url'>): string {
+  return safeUrl(item.url) || safeUrl(item.name.trim());
+}
+export function needsProductName(item: Pick<ShoppingItem, 'name' | 'url'>): boolean {
+  const url = itemLink(item); if (!url) return false;
+  const name = item.name.trim();
+  return !name || name === LINK_NAME_PLACEHOLDER || /^https?:\/\//i.test(name)
+    || name.replace(/^www\./, '') === new URL(url).hostname.replace(/^www\./, '');
+}
 export function parseQuickText(text: string, defaultStore = ''): ShoppingItem[] {
-  return text.split(/[、,\n;；]+|\s+と\s+|と(?=[^と]+\d)|と(?=[\p{Script=Han}\p{Script=Katakana}])|(?<=\d(?:個|本|袋|パック|箱|枚|缶|台))と/u).map(raw => raw.trim()).filter(Boolean).slice(0, 50).map(raw => {
-    const url = raw.match(/https?:\/\/\S+/)?.[0] || '';
-    const clean = raw.replace(/https?:\/\/\S+/, '').trim();
-    const match = clean.match(/^(.*?)\s*(\d+(?:\.\d+)?)\s*(パック|セット|ケース|kg|ml|個|本|袋|箱|枚|缶|台|足|g|L|l)?$/i);
-    const validUrl = safeUrl(url);
-    const name = match?.[1]?.trim() || clean || (validUrl ? new URL(validUrl).hostname : raw);
-    return newItem(name, { quantity: match ? Math.max(.01, Number(match[2])) : 1, unit: match?.[3] || '個', category: guessCategory(name), store: defaultStore, url: validUrl });
+  // Preserve URL punctuation before splitting ordinary shopping notes.
+  const links: string[] = [];
+  const protectedText = text.replace(/https?:\/\/[^\s<>"'、]+/giu, value => {
+    const url = value.replace(/[。）」』]+$/u, '');
+    links.push(url); return `\uE000${links.length - 1}\uE001`;
   });
+  const parts = protectedText.split(/[、,\n;；]+|\s+と\s+|と(?=[^と]+\d)|と(?=[\p{Script=Han}\p{Script=Katakana}])|(?<=\d(?:個|本|袋|パック|箱|枚|缶|台))と/u);
+  return parts.flatMap(raw => {
+    raw = raw.trim(); if (!raw) return [];
+    const tokens = [...raw.matchAll(/\uE000(\d+)\uE001/gu)];
+    const clean = raw.replace(/\uE000\d+\uE001/gu, '').trim();
+    const match = clean.match(/^(.*?)\s*(\d+(?:\.\d+)?)\s*(パック|セット|ケース|kg|ml|個|本|袋|箱|枚|缶|台|足|g|L|l)$/i);
+    const explicitName = match?.[1]?.trim() || clean;
+    const fields = { quantity: match ? Math.max(.01, Number(match[2])) : 1, unit: match?.[3] || '個', store: defaultStore };
+    if (tokens.length) return tokens.map(token => {
+      const url = safeUrl(links[Number(token[1])] || '');
+      return newItem(explicitName || LINK_NAME_PLACEHOLDER, { ...fields, category: guessCategory(explicitName), url });
+    });
+    return [newItem(explicitName || raw, { ...fields, category: guessCategory(explicitName || raw) })];
+  }).slice(0, 50);
+}
+export function applyProductTitle(item: ShoppingItem, sourceUrl: string, title: string, manuallyEditing = false): ShoppingItem {
+  if (manuallyEditing || itemLink(item) !== sourceUrl || !needsProductName(item) || !title.trim()) return item;
+  return { ...item, name: title.trim().slice(0, 500), url: sourceUrl, category: guessCategory(title), updatedAt: new Date().toISOString() };
+}
+export function togglePurchased(item: ShoppingItem): ShoppingItem {
+  const now = new Date().toISOString();
+  if (item.status === 'purchased' || item.status === 'received') {
+    return { ...item, status: 'planned', purchasedAt: '', purchasedQuantity: 0,
+      stock: Math.max(0, item.stock - item.purchasedQuantity), updatedAt: now };
+  }
+  return { ...item, status: 'purchased', purchasedAt: TODAY(), purchasedQuantity: item.quantity,
+    stock: item.stock + Math.max(0, item.quantity - item.purchasedQuantity), checkedAt: TODAY(), updatedAt: now };
 }
 export function validateState(input: unknown): ShoppingState | null {
   if (!input || typeof input !== 'object') return null;
@@ -75,7 +110,7 @@ export function validateState(input: unknown): ShoppingState | null {
   const settings = value.settings || blank.settings;
   return { version: 1, items, templates, activity, settings: { budget: boundedNumber(settings.budget), reducedMotion: settings.reducedMotion === true, name: boundedString(settings.name, 80), defaultStore: boundedString(settings.defaultStore, 200) } };
 }
-export function safeUrl(value: string) { try { const u = new URL(value); return ['https:', 'http:'].includes(u.protocol) ? u.toString() : ''; } catch { return ''; } }
+export function safeUrl(value: string) { try { const u = new URL(value); return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password ? u.toString() : ''; } catch { return ''; } }
 export function itemTotal(item: ShoppingItem) { return Math.max(0, item.price * item.quantity + item.shipping - item.discount); }
 export function isRestock(item: ShoppingItem) { return item.stock + item.spare <= item.restockThreshold && (item.stock > 0 || item.spare > 0 || !!item.checkedAt) && (!item.restockSnooze || item.restockSnooze <= TODAY()); }
 export function estimateDays(item: ShoppingItem) { return item.consumptionPerDay > 0 ? Math.ceil(item.remaining / item.consumptionPerDay) : null; }

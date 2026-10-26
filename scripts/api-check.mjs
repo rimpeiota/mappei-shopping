@@ -29,6 +29,11 @@ await check('PNG attachment uploads to R2',async()=>{const f=new FormData();f.se
 await check('The attachment owner can download it',async()=>{const r=await call(A,fileUrl);assert.equal(r.status,200);assert.equal(r.headers.get('x-content-type-options'),'nosniff');});
 await check('Another owner cannot download the attachment',async()=>assert.equal((await call(B,fileUrl)).status,404));
 await check('An executable attachment is rejected',async()=>{const f=new FormData();f.set('file',new Blob(['console.log(1)'],{type:'text/javascript'}),'qa.js');assert.equal((await call(A,'/api/attachments','POST',f)).status,415);});
+await check('Unauthenticated link previews are rejected',async()=>assert.equal((await call(null,'/api/link-preview','POST',{url:'https://www.amazon.co.jp/dp/QA'})).status,401));
+await check('Cross-origin link previews are rejected',async()=>assert.equal((await call(A,'/api/link-preview','POST',{url:'https://www.amazon.co.jp/dp/QA'},{origin:'https://example.invalid'})).status,403));
+await check('Invalid link preview input is rejected',async()=>assert.equal((await call(A,'/api/link-preview','POST',{url:[]})).status,400));
+await check('Private link preview destinations are rejected',async()=>assert.equal((await call(A,'/api/link-preview','POST',{url:'https://127.0.0.1/'})).status,400));
+await check('Unknown shopping hosts return manual naming without fetching',async()=>{const r=await call(A,'/api/link-preview','POST',{url:'https://shop.example.com/item'});assert.equal(r.status,200);const d=await r.json();assert.equal(d.resolved,false);assert.equal(d.title,'');assert.match(d.message,/商品名/u);});
 await mkdir('outputs',{recursive:true});
 await writeFile('outputs/api-check.json',JSON.stringify({at:new Date().toISOString(),base,passed:results.length,results},null,2));
 console.log(`${results.length}/${results.length} API checks passed`);

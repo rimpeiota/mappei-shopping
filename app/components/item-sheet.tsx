@@ -4,7 +4,7 @@ import { Star, Trash2, Plus, ExternalLink, Paperclip, Package, Check, ArrowUpRig
 import { CATEGORIES, STATUS_LABELS, TODAY, money, safeUrl, uid, type ShoppingItem, type ItemStatus, type Attachment } from '@/lib/client-model';
 import { Modal } from './modal';
 function Field({ label, children, span = false }: { label: string; children: ReactNode; span?: boolean }) { return <label className={`field ${span ? 'field-span' : ''}`}><span>{label}</span>{children}</label>; }
-export function ItemSheet({ item, authenticated, onClose, onSave, onDelete, onCopy, toast }: { item: ShoppingItem; authenticated: boolean; onClose: () => void; onSave: (item: ShoppingItem) => void; onDelete: (id: string) => void; onCopy: (item: ShoppingItem) => void; toast: (text: string) => void }) {
+export function ItemSheet({ item, authenticated, onClose, onSave, onDelete, onCopy, onMove, toast }: { item: ShoppingItem; authenticated: boolean; onClose: () => void; onSave: (item: ShoppingItem) => void; onDelete: (id: string) => void; onCopy: (item: ShoppingItem) => void; onMove?: (direction: number) => void; toast: (text: string) => void }) {
   const [draft, setDraft] = useState(item);
   const [tab, setTab] = useState('商品');
   const [uploading, setUploading] = useState(false);
@@ -35,9 +35,12 @@ export function ItemSheet({ item, authenticated, onClose, onSave, onDelete, onCo
       <Field label="カテゴリ"><select value={draft.category} onChange={e => update('category', e.target.value)}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></Field>{text('購入先', 'store', '店舗・通販')}
       {text('商品URL', 'url', 'https://', 'url', true)}
       {safeUrl(draft.url) && <a className="inline-link field-span" href={safeUrl(draft.url)} target="_blank" rel="noopener noreferrer">商品ページ <ExternalLink size={14} /></a>}
+      <details className="detail-advanced field-span"><summary>その他の商品情報</summary><div className="field-grid">
       {text('ブランド', 'brand')}{text('型番', 'model')}{text('色', 'color')}{text('サイズ', 'size')}{text('容量', 'capacity')}{text('別名・検索キーワード', 'aliases')}
       {text('関連グループ', 'group', '本体と付属品など')}{text('対応する本体・規格', 'compatibility')}
       {text('リストの日付', 'listDate', '', 'date')}{text('検討を再開する日', 'holdUntil', '', 'date')}
+      {onMove && <div className="field-span"><span className="field-note">リスト内の順番</span><div className="compare-selectors"><button className="button secondary" onClick={() => onMove(-1)}>上へ移動</button><button className="button secondary" onClick={() => onMove(1)}>下へ移動</button></div></div>}
+      </div></details>
       <Field label="コメント" span><textarea rows={3} value={draft.comment} onChange={e => update('comment', e.target.value)} placeholder="商品についてのメモ" /></Field>
       <div className="field-span subheading">添付 <span>{draft.attachments.length}</span></div>
       {draft.attachments.map(file => <div className="attachment-row field-span" key={file.id}><Paperclip size={16} /><a href={safeUrl(file.url) || (file.url.startsWith('/api/') ? file.url : undefined)} target="_blank" rel="noopener noreferrer">{file.name}</a><button className="icon-button small" aria-label={`${file.name}を外す`} onClick={() => update('attachments', draft.attachments.filter(a => a.id !== file.id))}><X size={15} /></button></div>)}
@@ -79,6 +82,7 @@ export function ItemSheet({ item, authenticated, onClose, onSave, onDelete, onCo
       <button className="button secondary" disabled={draft.stock <= 0} onClick={() => setDraft(old => ({ ...old, stock: Math.max(0, old.stock - 1), checkedAt: TODAY(), usedUpAt: old.stock <= 1 ? TODAY() : old.usedUpAt }))}>1{draft.unit}使い切る</button>
       <button className="button secondary" disabled={draft.spare <= 0} onClick={() => setDraft(old => ({ ...old, spare: old.spare - 1, stock: old.stock + 1, openedAt: TODAY(), checkedAt: TODAY() }))}>予備を開封</button>
       <button className="button secondary" disabled={draft.stock <= 0} onClick={() => setDraft(old => ({ ...old, stock: Math.max(0, old.stock - 1), checkedAt: TODAY() }))}>1{draft.unit}譲渡・廃棄</button>
+      <button className="button secondary field-span" onClick={() => { const next = new Date(); next.setDate(next.getDate() + 7); update('restockSnooze', next.toLocaleDateString('sv-SE')); }}>7日間買い足しを見送る</button>
       <p className="field-note field-span">実測の残量と推定は分けて表示します。価格・期限の通知や位置通知は未接続です。</p>
     </div>}
     {tab === '共有' && <div className="field-grid">
