@@ -10,6 +10,12 @@ test("public HTTPS product URLs retain query and lose fragments", () => {
   assert.equal(supportedPreviewSite(page), "Amazon");
 });
 
+test("the exact SUIT SQUARE and UNITED ARROWS storefront hosts are supported", () => {
+  for (const host of ["uktsc.com", "www.uktsc.com"]) assert.equal(supportedPreviewSite(new URL(`https://${host}/product/example`)), "SUIT SQUARE");
+  assert.equal(supportedPreviewSite(new URL("https://store.united-arrows.co.jp/product/example")), "UNITED ARROWS");
+  assert.equal(supportedPreviewSite(new URL("https://store.united-arrows.co.jp.attacker.com/product/example")), null);
+});
+
 test("unsafe protocols, credentials, ports, IP variants, and internal names are rejected", () => {
   for (const value of ["http://www.amazon.co.jp/x", "file:///etc/passwd", "https://u:p@www.amazon.co.jp/", "https://www.amazon.co.jp:444/", "https://127.0.0.1/", "https://2130706433/", "https://0x7f000001/", "https://[::1]/", "https://localhost/", "https://shop.internal/", "https://amazon.co.jp./", "https://www.amazon.co.jp\\@127.0.0.1/"]) {
     assert.throws(() => validatePreviewUrl(value), /HTTPS/u, value);
@@ -58,6 +64,28 @@ test("Yodobashi's exact delivery tagline is removed while preserving the product
   const html = `<head><meta property="og:title" content="サランラップ サランラップ 30cm×20m 通販【全品無料配達】"></head>`;
   assert.equal(extractProductTitle(html, new URL("https://www.yodobashi.com/product/100000001002327911/")), "サランラップ サランラップ 30cm×20m");
   assert.equal(normalizeProductTitle("通販【全品無料配達】 解説本", ["ヨドバシ"]), "通販【全品無料配達】 解説本");
+});
+
+test("SUIT SQUARE's known stacked site labels are removed without altering the product", () => {
+  const html = `<head><meta property="og:title" content="ウォッシャブルシャツ／長袖 | SUIT SQUARE／UNIVERSAL LANGUAGE | SUIT SQUARE（スーツスクエア）の公式ファッション通販サイト | スーツスクエア&#215;ユニバーサルランゲージ"></head>`;
+  assert.equal(extractProductTitle(html, new URL("https://www.uktsc.com/product/example")), "ウォッシャブルシャツ／長袖");
+});
+
+test("public storefront anti-bot HTML without product metadata stays unresolved", () => {
+  const html = `<html><body><script src="/challenge.js"></script><div>Protected storefront</div></body></html>`;
+  assert.equal(extractProductTitle(html, new URL("https://store.united-arrows.co.jp/product/example")), null);
+});
+
+test("failure logging contains only the fixed code, never URL, response, or exception content", async () => {
+  const warnings: unknown[][] = [];
+  const previousWarn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args); };
+  try {
+    await resolveLinkPreview(page.href, async () => new Response("private provider details", { status: 403 }));
+    await resolveLinkPreview(page.href, async () => { throw new Error("sensitive error details"); });
+    await resolveLinkPreview(page.href, async () => new Response("<html><head></head></html>", { headers: { "content-type": "text/html" } }));
+  } finally { console.warn = previousWarn; }
+  assert.deepEqual(warnings, [["[shopping-link]", "http_403"], ["[shopping-link]", "fetch_failed"], ["[shopping-link]", "no_title"]]);
 });
 
 test("every redirect is checked before issuing another request", async () => {

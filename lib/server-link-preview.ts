@@ -27,6 +27,8 @@ const SHOPPING_SITES: readonly ShoppingSite[] = [
   { hosts: ["apple.com", "www.apple.com"], name: "Apple", aliases: ["Apple", "Apple（日本）", "Apple (日本)"] },
   { hosts: ["store.google.com"], name: "Google ストア", aliases: ["Google ストア", "Google Store"] },
   { hosts: ["jp.mercari.com"], name: "メルカリ", aliases: ["メルカリ", "Mercari"] },
+  { hosts: ["uktsc.com", "www.uktsc.com"], name: "SUIT SQUARE", aliases: ["SUIT SQUARE", "SUIT SQUARE／UNIVERSAL LANGUAGE", "SUIT SQUARE（スーツスクエア）の公式ファッション通販サイト", "スーツスクエア×ユニバーサルランゲージ", "THE SUIT COMPANY", "ザ・スーツカンパニー"] },
+  { hosts: ["store.united-arrows.co.jp"], name: "UNITED ARROWS", aliases: ["UNITED ARROWS", "ユナイテッドアローズ公式通販", "ユナイテッドアローズ公式通販 - UNITED ARROWS ONLINE", "UNITED ARROWS ONLINE"] },
 ];
 
 const HOST_TO_SITE = new Map(SHOPPING_SITES.flatMap((site) => site.hosts.map((host) => [host, site] as const)));
@@ -195,16 +197,23 @@ async function readHtml(response: Response): Promise<string | null> {
 }
 
 type PreviewFetcher = (url: string, init: RequestInit) => Promise<Response>;
+type PreviewFailureCode = "timeout" | "fetch_failed" | "no_title" | `http_${number}`;
 
 export async function resolveLinkPreview(input: string, fetcher: PreviewFetcher = fetch): Promise<LinkPreview> {
   const original = validatePreviewUrl(input);
   if (!supportedPreviewSite(original)) return unresolved(original, "このサイトの自動取得には未対応です。商品名を入力してください。");
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let failureLogged = false;
+  const failed = (message: string, code: PreviewFailureCode): LinkPreview => {
+    // Log only fixed internal codes / HTTP status; never URL, title, body, or exceptions.
+    if (!failureLogged) { console.warn("[shopping-link]", code); failureLogged = true; }
+    return unresolved(original, message);
+  };
   const work = async (): Promise<LinkPreview> => {
     let current = original;
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects++) {
-      if (controller.signal.aborted) return unresolved(original, "取得に時間がかかっています。商品名を入力してください。");
+      if (controller.signal.aborted) return failed("取得に時間がかかっています。商品名を入力してください。", "timeout");
       const response = await fetcher(current.href, {
         method: "GET", redirect: "manual", credentials: "omit", signal: controller.signal,
         headers: { Accept: "text/html,application/xhtml+xml", "Accept-Language": "ja,en;q=0.7", "User-Agent": "MappeiShopping/1.0" },
@@ -212,31 +221,31 @@ export async function resolveLinkPreview(input: string, fetcher: PreviewFetcher 
       if (REDIRECT_STATUSES.has(response.status)) {
         await response.body?.cancel();
         const location = response.headers.get("location");
-        if (!location || redirects === MAX_REDIRECTS) return unresolved(original, "商品ページへ移動できませんでした。商品名を入力してください。");
+        if (!location || redirects === MAX_REDIRECTS) return failed("商品ページへ移動できませんでした。商品名を入力してください。", "fetch_failed");
         let next: URL;
         try { next = validatePreviewUrl(new URL(location, current).href); }
-        catch { return unresolved(original, "安全に取得できない移動先です。商品名を入力してください。"); }
-        if (!supportedPreviewSite(next)) return unresolved(original, "移動先サイトの自動取得には未対応です。商品名を入力してください。");
+        catch { return failed("安全に取得できない移動先です。商品名を入力してください。", "fetch_failed"); }
+        if (!supportedPreviewSite(next)) return failed("移動先サイトの自動取得には未対応です。商品名を入力してください。", "fetch_failed");
         current = next;
         continue;
       }
       if (!response.ok || !/^(?:text\/html|application\/xhtml\+xml)(?:\s*;|\s*$)/iu.test(response.headers.get("content-type") ?? "")) {
         await response.body?.cancel();
-        return unresolved(original, "商品ページを読み取れませんでした。商品名を入力してください。");
+        return failed("商品ページを読み取れませんでした。商品名を入力してください。", response.ok ? "fetch_failed" : `http_${response.status}`);
       }
       const html = await readHtml(response);
-      if (html === null) return unresolved(original, "ページを読み取れる範囲を超えました。商品名を入力してください。");
+      if (html === null) return failed("ページを読み取れる範囲を超えました。商品名を入力してください。", "fetch_failed");
       const title = extractProductTitle(html, current);
       return title ? { title, url: current.href, site: supportedPreviewSite(current)!, resolved: true }
-        : unresolved(original, "商品名を見つけられませんでした。商品名を入力してください。");
+        : failed("商品名を見つけられませんでした。商品名を入力してください。", "no_title");
     }
-    return unresolved(original, "商品ページへ移動できませんでした。商品名を入力してください。");
+    return failed("商品ページへ移動できませんでした。商品名を入力してください。", "fetch_failed");
   };
   try {
     const timeout = new Promise<LinkPreview>((resolve) => {
-      timer = setTimeout(() => { controller.abort(); resolve(unresolved(original, "取得に時間がかかっています。商品名を入力してください。")); }, TIMEOUT_MS);
+      timer = setTimeout(() => { controller.abort(); resolve(failed("取得に時間がかかっています。商品名を入力してください。", "timeout")); }, TIMEOUT_MS);
     });
     return await Promise.race([work(), timeout]);
-  } catch { return unresolved(original, "商品ページを取得できませんでした。商品名を入力してください。"); }
+  } catch { return failed("商品ページを取得できませんでした。商品名を入力してください。", controller.signal.aborted ? "timeout" : "fetch_failed"); }
   finally { if (timer) clearTimeout(timer); }
 }
