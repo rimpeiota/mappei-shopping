@@ -34,6 +34,16 @@ await check('Cross-origin link previews are rejected',async()=>assert.equal((awa
 await check('Invalid link preview input is rejected',async()=>assert.equal((await call(A,'/api/link-preview','POST',{url:[]})).status,400));
 await check('Private link preview destinations are rejected',async()=>assert.equal((await call(A,'/api/link-preview','POST',{url:'https://127.0.0.1/'})).status,400));
 await check('Unknown shopping hosts return manual naming without fetching',async()=>{const r=await call(A,'/api/link-preview','POST',{url:'https://shop.example.com/item'});assert.equal(r.status,200);const d=await r.json();assert.equal(d.resolved,false);assert.equal(d.title,'');assert.match(d.message,/商品名/u);});
+// Raw audio is checked before model configuration or inference.
+async function audioCall(owner, body, extra={}) {
+  return fetch(base+'/api/transcribe',{method:'POST',headers:{...(owner?{'oai-authenticated-user-id':owner}:{}),origin:base,'Content-Type':'audio/wav',...extra},body});
+}
+await check('Unauthenticated audio is rejected',async()=>assert.equal((await audioCall(null,new Uint8Array(44))).status,401));
+await check('Cross-origin audio is rejected',async()=>assert.equal((await audioCall(A,new Uint8Array(44),{origin:'https://example.invalid'})).status,403));
+await check('Unsupported audio MIME is rejected',async()=>assert.equal((await audioCall(A,new Uint8Array(44),{'Content-Type':'text/plain'})).status,415));
+await check('A forged audio header is rejected',async()=>assert.equal((await audioCall(A,new Uint8Array(44))).status,415));
+await check('Empty recordings are rejected',async()=>assert.equal((await audioCall(A,new Uint8Array())).status,400));
+await check('Audio over eight MiB is rejected',async()=>assert.equal((await audioCall(A,new Uint8Array(8*1024*1024+1))).status,413));
 await mkdir('outputs',{recursive:true});
 await writeFile('outputs/api-check.json',JSON.stringify({at:new Date().toISOString(),base,passed:results.length,results},null,2));
 console.log(`${results.length}/${results.length} API checks passed`);

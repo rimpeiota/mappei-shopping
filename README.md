@@ -14,6 +14,16 @@
 
 URL文字列やドメイン名だけが品名になっている旧記録も、URLを保持していれば取得候補にします。元URLは商品ページへのリンクとして残します。取得するのはページのタイトルで、価格・仕様・在庫の自動収集や定期監視ではありません。新しい取得経路と失敗時の手入力は、ブラウザ確認結果を別に記録します。
 
+## 音声入力
+
+マイクを押した直後の「開始待ち」と、ブラウザが実際に聞き始めた「聞き取り中」を分けて表示します。Web Speech APIの開始を15秒待っても進まない場合は、マイクの許可と代替方法を案内します。確定した認識結果だけを下書きへ追記し、「追加」で商品に登録します。同じ確定結果を重複して追記しない処理を入れています。
+
+ブラウザの音声認識を利用できない場合は、案内から明示的に「録音して文字にする」を選べます。録音は最大45秒、音声ファイルはWAV・M4A・MP3・WebM・OGG、容量は8MiBまでです。サインイン後にCloudflare Workers AIの`@cf/openai/whisper-large-v3-turbo`へ送って日本語の文字へ変換します。Cloudflareへ送信することは操作前の画面に表示します。既存のWorkers AI秘密設定を再利用し、権限の追加はしていません。
+
+マイクの権限拒否を迂回する機能ではなく、サイト・OSのマイク許可は本人による設定が必要です。キャンセル、アカウントの切り替え、画面を離れた場合や背景化では聞き取り・録音を中断してマイクを解放します。音声と文字起こし全文をこのAPIのDB・R2・アプリログへ保存せず、失敗した音声は画面のメモリだけに保持して再試行できます。成功した文字は通常の下書きとなり、商品へ追加した結果は通常の保存対象です。
+
+今回の修正を含む単体テストは68 / 68合格。ローカルブラウザでは開始待ちから15秒後の案内を確認していますが、実マイクはまだ許可されておらず、実音声・今回の本番文字起こし経路の合格は未確認です。
+
 ## 保存と接続の範囲
 
 入力は先に端末へ保存し、認証後にCloudflare D1へ同期します。端末キャッシュもowner別に分け、匿名下書きの同期は採用の選択を求めます。オフラインでは最後のownerの端末キャッシュを復元し、再接続時はGETで現在の認証ownerを確認してから同期します。D1はユーザー別に保存し、revisionの一致を条件に書き込むことで、古い端末からの上書きを防ぎます。競合時は端末側とクラウド側の選択を求めます。
@@ -56,7 +66,7 @@ npm start -- --port 8787
 
 ```sh
 npx tsc --noEmit
-node --experimental-strip-types --test scripts/parser.test.ts
+npm test
 npm run build
 ```
 
@@ -79,7 +89,7 @@ AI接続はSitesの秘密設定を使うREST API方式で設定済みです。�
 - Workerへ`AI` bindingを設定する。
 - Worker側のSecretに`CLOUDFLARE_ACCOUNT_ID`と`CLOUDFLARE_AI_TOKEN`を設定する。
 
-モデルは`@cf/meta/llama-3.1-8b-instruct`です。トークンはWorkerのサーバー側だけで利用します。[Cloudflare公式のWorkers AI REST API手順](https://developers.cloudflare.com/workers-ai/get-started/rest-api/)
+文章の商品整理は`@cf/meta/llama-3.1-8b-instruct`、録音・音声ファイルの日本語文字起こしは`@cf/openai/whisper-large-v3-turbo`です。トークンはWorkerのサーバー側だけで利用します。[Cloudflare公式のWorkers AI REST API手順](https://developers.cloudflare.com/workers-ai/get-started/rest-api/)
 
 `.env*`、`.dev.vars*`、依存パッケージ、端末データ、生成ビルド、検証出力はGit管理から除外しています。個人の買い物記録や認証情報はリポジトリへ含めません。`npm run build`と`npm start`はサイトの公開を実行しません。
 
@@ -88,10 +98,11 @@ AI接続はSitesの秘密設定を使うREST API方式で設定済みです。�
 | 場所 | 役割 |
 |---|---|
 | `app/page.tsx` | 入力、チェックリスト、URL品名補完、在庫、履歴、設定。 |
-| `app/components/` | 商品編集シートとモーダル。 |
+| `app/components/` | 商品編集シート、モーダル、`quick-composer.tsx`の入力・音声UI。 |
 | `lib/client-model.ts`・`lib/client-store.ts` | 商品モデル、端末保存、同期。 |
-| `app/api/` | 状態保存、文章解析、商品ページのタイトル取得、添付、診断。 |
-| `lib/server-*.ts` | 認証・入力制限、文字解析、AI、URL/HTMLの制限付き読み取り、添付検証。 |
+| `lib/client-speech.ts` | ブラウザ音声認識の開始・終了・時間制限・確定結果の管理。 |
+| `app/api/` | 状態保存、文章解析、音声文字起こし、商品ページのタイトル取得、添付、診断。 |
+| `lib/server-*.ts` | 認証・入力制限、文字解析、AI、音声ヘッダー検証・文字起こし、URL/HTMLの制限付き読み取り、添付検証。 |
 | `db/`・`drizzle/` | D1スキーマとSQL。 |
 | `public/sw.js`・`public/manifest.webmanifest` | オフラインシェルとPWA。 |
 | `worker/index.ts`・`vite.config.ts` | Workerとビルド・プレビュー設定。 |

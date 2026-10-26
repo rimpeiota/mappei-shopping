@@ -535,3 +535,14 @@ html[data-motion="reduced"] *, html[data-motion="reduced"] *::before, html[data-
 .detail-advanced > summary { cursor: pointer; min-height: 44px; padding: 10px 0; font-weight: 600; }
 .detail-advanced > .field-grid { margin-top: 12px; }
 .item-meta:empty { display: none; }
+
+/* Voice controls stay in normal flow and never widen the mobile checklist. */
+.voice-help { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); min-width: 0; overflow-wrap: anywhere; }
+.voice-help-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.voice-help p { margin: 8px 0; line-height: 1.6; }
+.voice-help-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.voice-help-actions > * { max-width: 100%; white-space: normal; min-height: 44px; }
+.voice-help details { margin-top: 8px; }
+.voice-help summary { cursor: pointer; padding: 10px 0; min-height: 44px; }
+.voice-interim { margin: 8px 0; padding: 8px 12px; color: var(--muted); overflow-wrap: anywhere; }
+@media (max-width: 600px) { .voice-help-actions { flex-direction: column; align-items: stretch; } }
