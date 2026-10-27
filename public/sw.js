@@ -1,4 +1,4 @@
-const CACHE = 'shopping-shell-v1';
+const CACHE = 'shopping-shell-v2';
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil((async () => {
   for (const key of await caches.keys()) if (key.startsWith('shopping-shell-') && key !== CACHE) await caches.delete(key);

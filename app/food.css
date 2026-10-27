@@ -1,0 +1,68 @@
+.food-panel { min-width: 0; max-width: 100%; margin-bottom: 24px; overflow-wrap: anywhere; }
+.food-panel h3 { font-size: 17px; line-height: 1.5; font-weight: 650; }
+.food-panel button { min-height: 44px; max-width: 100%; white-space: normal; }
+.food-panel input, .food-panel textarea { font-size: 16px; }
+.food-tabs { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.food-tabs button { display: flex; align-items: center; justify-content: center; gap: 7px; min-width: 0; padding: 12px 6px; color: var(--muted-foreground); border-bottom: 3px solid transparent; }
+.food-tabs button.active { color: var(--foreground); border-bottom-color: var(--primary); font-weight: 650; }
+.food-entry-actions, .food-recipe-actions, .food-form-actions, .food-shortage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.food-entry-actions > button { flex: 1 1 180px; }
+.food-note { color: var(--muted-foreground); font-size: 13px; line-height: 1.7; margin: 10px 0; }
+.food-entry-anchor { scroll-margin-top: 16px; min-width: 0; }
+.food-form { display: grid; gap: 14px; padding: 16px; margin: 16px 0 20px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; min-width: 0; max-width: 100%; }
+.food-form > .food-note { margin: 0; }
+.food-section-heading, .food-list-heading, .food-recipe-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.food-section-heading { flex-wrap: nowrap; }
+.food-section-heading h3 { min-width: 0; }
+.food-section-heading .icon-button { flex-shrink: 0; }
+.food-field { display: grid; gap: 6px; min-width: 0; }
+.food-field > span { font-size: 14px; font-weight: 550; }
+.food-two-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.food-number-field { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.food-number-field input { flex: 1; }
+.food-number-field > span { flex-shrink: 0; }
+.food-form-actions { justify-content: flex-end; }
+.food-form-actions > .primary { flex: 1 1 160px; }
+.food-error { color: var(--destructive); font-size: 14px; line-height: 1.6; }
+.food-list-heading { margin-top: 24px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.food-filter { display: flex; flex-wrap: wrap; gap: 4px; }
+.food-filter button { padding: 8px 10px; border: 1px solid transparent; border-radius: 7px; color: var(--muted-foreground); font-size: 14px; }
+.food-filter button.active { border-color: var(--border); background: var(--secondary); color: var(--foreground); }
+.food-stock-list, .food-comparison-list { list-style: none; margin: 0; padding: 0; min-width: 0; }
+.food-stock-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.food-stock-row > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.food-stock-row strong, .food-comparison-row strong { font-size: 16px; font-weight: 600; }
+.food-stock-row small { color: var(--muted-foreground); font-size: 12px; }
+.food-stock-row .button { flex-shrink: 0; font-size: 14px; padding-inline: 11px; }
+.food-amount { color: var(--foreground); font-size: 15px; }
+.food-empty { padding: 24px 0; color: var(--muted-foreground); font-size: 14px; line-height: 1.8; }
+.food-empty p + p { margin-top: 10px; }
+.food-text-button { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; padding: 12px; margin-top: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.food-recipe-heading { margin-top: 20px; justify-content: flex-start; }
+.food-recipe-heading h3 { flex: 1 1 180px; }
+.food-recipe-heading > span { background: var(--secondary); padding: 4px 10px; border-radius: 6px; font-size: 14px; }
+.food-source-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; color: var(--primary); font-size: 14px; }
+.food-comparison-row { padding: 16px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.food-comparison-heading { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 7px 12px; min-width: 0; }
+.food-comparison-heading strong { min-width: 0; flex: 1 1 130px; }
+.food-result { font-size: 14px; font-weight: 650; color: var(--amber); }
+.food-status-enough .food-result { color: var(--green); }
+.food-status-shortage .food-result { color: var(--destructive); }
+.food-comparison-amounts { display: flex; flex-wrap: wrap; gap: 3px 18px; color: #dddddd; margin-top: 6px; font-size: 14px; }
+.food-comparison-row .food-note { margin: 7px 0 0; }
+.food-planned { margin-top: 7px; color: var(--green); font-size: 13px; }
+.food-row-actions { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 5px; }
+.food-row-actions button { color: var(--primary); font-size: 14px; padding: 5px 0; text-decoration: underline; text-underline-offset: 4px; }
+.food-shortage-actions { margin-top: 20px; }
+.food-shortage-actions > .primary { flex: 1 1 260px; }
+.food-shortage-actions > .secondary { flex: 1 1 180px; }
+.food-recipe-more { margin-top: 20px; border-top: 1px solid var(--border); }
+.food-recipe-more > summary { min-height: 44px; padding: 12px 0; cursor: pointer; color: var(--muted-foreground); font-size: 14px; }
+.food-recipe-more .food-recipe-actions { margin-top: 8px; }
+@media (max-width: 380px) {
+  .food-tabs button { font-size: 14px; gap: 5px; }
+  .food-form { padding: 12px; }
+  .food-two-fields { gap: 8px; }
+  .food-list-heading { align-items: flex-start; }
+  .food-stock-row { gap: 8px; }
+}

@@ -1,3 +1,5 @@
+import type { FoodRecipe } from './client-food';
+
 export type ItemStatus = 'planned' | 'considering' | 'cart' | 'ordered' | 'purchased' | 'received' | 'snoozed' | 'returned' | 'exchanged' | 'cancelled';
 export type Mode = 'list' | 'stock' | 'history' | 'favorites' | 'settings';
 export type PriceRecord = { id: string; store: string; price: number; date: string; source: string };
@@ -11,23 +13,25 @@ export type ShoppingItem = {
   purchasedQuantity: number; purchasedAt: string; deliveryDate: string; returnUntil: string; warrantyUntil: string;
   subscriptionDate: string; subscriptionQuantity: number; subscriptionEvery: number; manualUrl: string;
   stock: number; spare: number; location: string; remaining: number; checkedAt: string; expiry: string; openedAt: string; usedUpAt: string; consumptionPerDay: number; restockThreshold: number; restockSnooze: string;
+  inventoryOnly: boolean; stockKnown: boolean; inventorySource: string; stockReconciledQuantity: number;
   assignee: string; requester: string; requestedDate: string; shared: boolean; comment: string; rating: string; rebuy: string;
   prices: PriceRecord[]; attachments: Attachment[];
 };
 export type Template = { id: string; name: string; items: Pick<ShoppingItem, 'name' | 'quantity' | 'unit' | 'category' | 'store'>[] };
 export type Activity = { id: string; text: string; at: string };
-export type ShoppingState = { version: 1; items: ShoppingItem[]; templates: Template[]; activity: Activity[]; settings: { budget: number; reducedMotion: boolean; defaultStore: string; name: string } };
+export type ShoppingState = { version: 2; items: ShoppingItem[]; templates: Template[]; activity: Activity[]; mealRecipe: FoodRecipe | null; settings: { budget: number; reducedMotion: boolean; defaultStore: string; name: string } };
+export type ShoppingCache = { state: ShoppingState; revision: number; dirty: boolean; legacyDirty: boolean };
 export const STATUS_LABELS: Record<ItemStatus, string> = { planned: '買う予定', considering: '検討中', cart: 'かごの中', ordered: '注文済み', purchased: '購入済み', received: '受取済み', snoozed: '次回', returned: '返品', exchanged: '交換', cancelled: '取消' };
 export const CATEGORIES = ['食品', '日用品', '衣類', '家電', '家具', 'その他'];
 export const COMPLETE: ItemStatus[] = ['purchased', 'received', 'returned', 'exchanged', 'cancelled'];
 export const TODAY = () => new Date().toLocaleDateString('sv-SE');
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const money = (value: number) => new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }).format(value || 0);
-export const emptyState = (): ShoppingState => ({ version: 1, items: [], templates: [], activity: [], settings: { budget: 0, reducedMotion: false, defaultStore: '', name: '' } });
+export const emptyState = (): ShoppingState => ({ version: 2, items: [], templates: [], activity: [], mealRecipe: null, settings: { budget: 0, reducedMotion: false, defaultStore: '', name: '' } });
 export function newItem(name: string, fields: Partial<ShoppingItem> = {}): ShoppingItem {
   const now = new Date().toISOString();
   return { id: uid(), name, quantity: 1, unit: '個', category: 'その他', store: '', status: 'planned', createdAt: now, updatedAt: now, listDate: TODAY(), favorite: false,
-    brand: '', model: '', color: '', size: '', capacity: '', aliases: '', url: '', price: 0, ceiling: 0, shipping: 0, discount: 0, runningCost: 0, measure: 0, measureUnit: 'g', coupon: '', couponEnds: '', saleEnds: '', holdUntil: '', group: '', compatibility: '', purchasedQuantity: 0, purchasedAt: '', deliveryDate: '', returnUntil: '', warrantyUntil: '', subscriptionDate: '', subscriptionQuantity: 1, subscriptionEvery: 30, manualUrl: '', stock: 0, spare: 0, location: '', remaining: 100, checkedAt: '', expiry: '', openedAt: '', usedUpAt: '', consumptionPerDay: 0, restockThreshold: 1, restockSnooze: '', assignee: '', requester: '', requestedDate: '', shared: false, comment: '', rating: '', rebuy: '', prices: [], attachments: [], ...fields };
+    brand: '', model: '', color: '', size: '', capacity: '', aliases: '', url: '', price: 0, ceiling: 0, shipping: 0, discount: 0, runningCost: 0, measure: 0, measureUnit: 'g', coupon: '', couponEnds: '', saleEnds: '', holdUntil: '', group: '', compatibility: '', purchasedQuantity: 0, purchasedAt: '', deliveryDate: '', returnUntil: '', warrantyUntil: '', subscriptionDate: '', subscriptionQuantity: 1, subscriptionEvery: 30, manualUrl: '', stock: 0, spare: 0, location: '', remaining: 100, checkedAt: '', expiry: '', openedAt: '', usedUpAt: '', consumptionPerDay: 0, restockThreshold: 1, restockSnooze: '', inventoryOnly: false, stockKnown: true, inventorySource: '', stockReconciledQuantity: 0, assignee: '', requester: '', requestedDate: '', shared: false, comment: '', rating: '', rebuy: '', prices: [], attachments: [], ...fields };
 }
 export function guessCategory(name: string): string {
   if (/牛乳|卵|パン|肉|魚|野菜|米|水|コーヒー|豆|バナナ|りんご|チーズ|ヨーグルト|冷凍|トマト|塩|醤油|味噌|茶|ビール|パスタ|白菜|キャベツ|キムチ/.test(name)) return '食品';
@@ -77,15 +81,87 @@ export function togglePurchased(item: ShoppingItem): ShoppingItem {
   const now = new Date().toISOString();
   if (item.status === 'purchased' || item.status === 'received') {
     return { ...item, status: 'planned', purchasedAt: '', purchasedQuantity: 0,
-      stock: Math.max(0, item.stock - item.purchasedQuantity), updatedAt: now };
+      stock: Math.max(0, item.stock - Math.max(0, item.purchasedQuantity - item.stockReconciledQuantity)), updatedAt: now };
   }
   return { ...item, status: 'purchased', purchasedAt: TODAY(), purchasedQuantity: item.quantity,
-    stock: item.stock + Math.max(0, item.quantity - item.purchasedQuantity), checkedAt: TODAY(), updatedAt: now };
+    stock: item.stock + Math.max(0, item.quantity - Math.max(item.purchasedQuantity, item.stockReconciledQuantity)),
+    stockKnown: item.stockKnown || (item.inventorySource === 'recipe' && !item.checkedAt && item.stock === 0 && item.spare === 0), checkedAt: TODAY(), updatedAt: now };
+}
+// Only newly confirmed purchases increase current stock. A lower historical purchase
+// quantity cannot establish how much remains after cooking, returns, or disposal.
+export function recordPurchasedQuantity(item: ShoppingItem, requested: number): ShoppingItem {
+  if (!Number.isFinite(requested)) return item;
+  const purchasedQuantity = Math.max(0, Math.min(item.quantity, requested));
+  const increase = Math.max(0, purchasedQuantity - Math.max(item.purchasedQuantity, item.stockReconciledQuantity));
+  const complete = purchasedQuantity >= item.quantity;
+  return { ...item, purchasedQuantity, stock: item.stock + increase,
+    stockKnown: item.stockKnown || (increase > 0 && item.inventorySource === 'recipe' && !item.checkedAt && item.stock === 0 && item.spare === 0),
+    purchasedAt: increase > 0 ? TODAY() : purchasedQuantity === 0 ? '' : item.purchasedAt,
+    checkedAt: increase > 0 ? TODAY() : item.checkedAt,
+    status: complete ? (item.status === 'received' ? 'received' : 'purchased')
+      : item.status === 'purchased' || item.status === 'received' ? 'planned' : item.status,
+    updatedAt: new Date().toISOString() };
+}
+export function setItemStatus(item: ShoppingItem, status: ItemStatus): ShoppingItem {
+  const next = status === 'purchased' || status === 'received' ? recordPurchasedQuantity(item, item.quantity) : item;
+  return { ...next, status, updatedAt: new Date().toISOString() };
+}
+export function finalizePurchaseDraft(original: ShoppingItem, draft: ShoppingItem, currentStockWasEntered = false): ShoppingItem {
+  // Reconcile once on Save, rather than on every digit while editing a quantity.
+  // Explicit current-stock input already includes what the person has purchased.
+  const increase = Math.max(0, draft.purchasedQuantity - Math.max(original.purchasedQuantity, original.stockReconciledQuantity));
+  return { ...draft, stock: currentStockWasEntered ? draft.stock : draft.stock + increase, stockReconciledQuantity: currentStockWasEntered ? Math.max(draft.stockReconciledQuantity, draft.purchasedQuantity) : draft.stockReconciledQuantity, updatedAt: new Date().toISOString() };
+}
+export function validateFoodRecipe(input: unknown): FoodRecipe | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const value = input as Record<string, unknown>;
+  if (typeof value.title !== 'string' || !value.title.trim() || typeof value.url !== 'string'
+    || !Array.isArray(value.ingredients) || value.ingredients.length === 0 || value.ingredients.length > 100) return null;
+  const url = value.url.trim() ? safeUrl(value.url.trim()) : '';
+  if (value.url.trim() && (!url || !url.startsWith('https:') || url.length > 2000)) return null;
+  if (value.servings !== null && (typeof value.servings !== 'number' || !Number.isFinite(value.servings) || value.servings <= 0 || value.servings > 1000)) return null;
+  const ingredients: FoodRecipe['ingredients'] = [];
+  for (const raw of value.ingredients) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const ingredient = raw as Record<string, unknown>;
+    if (typeof ingredient.name !== 'string' || !ingredient.name.trim() || typeof ingredient.unit !== 'string' || typeof ingredient.note !== 'string'
+      || (ingredient.quantity !== null && (typeof ingredient.quantity !== 'number' || !Number.isFinite(ingredient.quantity) || ingredient.quantity < 0 || ingredient.quantity > 1e6))) return null;
+    ingredients.push({ name: ingredient.name.trim().slice(0, 500), quantity: ingredient.quantity as number | null,
+      unit: ingredient.unit.trim().slice(0, 50), note: ingredient.note.trim().slice(0, 2000) });
+  }
+  return { title: value.title.trim().slice(0, 500), url, servings: value.servings as number | null, ingredients };
+}
+export function hasShoppingData(state: ShoppingState): boolean {
+  return state.items.length > 0 || state.templates.length > 0 || state.mealRecipe !== null;
+}
+// Called only after the person chooses to add their anonymous notes to this account.
+// Keep the account's current recipe when both have one; retain a local-only recipe.
+export function mergeAnonymousState(account: ShoppingState, local: ShoppingState): ShoppingState {
+  const ids = new Set(account.items.map(item => item.id));
+  const templateIds = new Set(account.templates.map(template => template.id));
+  return { ...account, items: [...account.items, ...local.items.filter(item => !ids.has(item.id))],
+    templates: [...account.templates, ...local.templates.filter(template => !templateIds.has(template.id))],
+    activity: [...local.activity, ...account.activity].slice(0, 200), mealRecipe: account.mealRecipe ?? local.mealRecipe };
+}
+export function validateShoppingCache(input: unknown): ShoppingCache | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const value = input as Record<string, unknown>;
+  const state = validateState(value.state);
+  if (!state) return null;
+  const sourceVersion = value.state && typeof value.state === 'object' ? (value.state as { version?: unknown }).version : undefined;
+  return { state, revision: typeof value.revision === 'number' && Number.isSafeInteger(value.revision) && value.revision >= 0 ? value.revision : 0,
+    dirty: value.dirty === true, legacyDirty: value.legacyDirty === true || (value.dirty === true && sourceVersion === 1) };
+}
+export function cacheNeedsReview(cache: ShoppingCache, remote: unknown, remoteRevision: number): boolean {
+  const remoteVersion = remote && typeof remote === 'object' ? (remote as { version?: unknown }).version : undefined;
+  // v1 clients may cache an empty interpretation of v2 at the latest revision.
+  // Revision equality alone therefore cannot make their pending writes safe.
+  return cache.dirty && (cache.revision !== remoteRevision || (cache.legacyDirty && remoteVersion === 2));
 }
 export function validateState(input: unknown): ShoppingState | null {
   if (!input || typeof input !== 'object') return null;
-  const value = input as Partial<ShoppingState>;
-  if (value.version !== 1 || !Array.isArray(value.items) || value.items.length > 10000) return null;
+  const value = input as Partial<Omit<ShoppingState, 'version'>> & { version?: unknown };
+  if ((value.version !== 1 && value.version !== 2) || !Array.isArray(value.items) || value.items.length > 10000) return null;
   if (!value.items.every(item => item && typeof item.name === 'string' && typeof item.id === 'string' && item.name.length <= 500 && item.id.length <= 200)) return null;
   if (new Set(value.items.map(item => item.id)).size !== value.items.length) return null;
   const blank = emptyState();
@@ -108,7 +184,7 @@ export function validateState(input: unknown): ShoppingState | null {
   const templates = Array.isArray(value.templates) ? value.templates.filter(t => t && typeof t.id === 'string' && typeof t.name === 'string' && Array.isArray(t.items)).slice(0, 500).map(t => ({ id: boundedString(t.id, 200), name: boundedString(t.name, 200), items: t.items.filter(i => i && typeof i.name === 'string').slice(0, 1000).map(i => ({ name: boundedString(i.name, 500), quantity: boundedNumber(i.quantity) || 1, unit: boundedString(i.unit, 50) || '個', category: boundedString(i.category, 100) || 'その他', store: boundedString(i.store, 200) })) })) : [];
   const activity = Array.isArray(value.activity) ? value.activity.filter(a => a && typeof a.text === 'string' && typeof a.at === 'string').slice(0, 200).map(a => ({ id: boundedString(a.id, 200) || uid(), text: boundedString(a.text, 2000), at: boundedString(a.at, 100) })) : [];
   const settings = value.settings || blank.settings;
-  return { version: 1, items, templates, activity, settings: { budget: boundedNumber(settings.budget), reducedMotion: settings.reducedMotion === true, name: boundedString(settings.name, 80), defaultStore: boundedString(settings.defaultStore, 200) } };
+  return { version: 2, items, templates, activity, mealRecipe: validateFoodRecipe(value.mealRecipe), settings: { budget: boundedNumber(settings.budget), reducedMotion: settings.reducedMotion === true, name: boundedString(settings.name, 80), defaultStore: boundedString(settings.defaultStore, 200) } };
 }
 export function safeUrl(value: string) { try { const u = new URL(value); return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password ? u.toString() : ''; } catch { return ''; } }
 export function itemTotal(item: ShoppingItem) { return Math.max(0, item.price * item.quantity + item.shipping - item.discount); }
