@@ -5,6 +5,7 @@ import { Check, ChevronDown, ClipboardList, ExternalLink, Plus, Refrigerator, X 
 import { safeUrl, TODAY, validateFoodRecipe, type ShoppingItem } from '@/lib/client-model';
 import { compareFood, foodKey, formatFoodQuantity, GRATIN_RECIPE, type FoodRecipe } from '@/lib/client-food';
 import { addFoodShortages, addPurchasedFood, editedFoodIngredients, foodIngredientLine, setCurrentFood } from '@/lib/client-food-actions';
+import { StoragePicker } from './storage-picker';
 
 type FoodPanelProps = {
   items: ShoppingItem[];
@@ -55,6 +56,12 @@ function purchaseSummary(rows: ShoppingItem[]): string {
   return known.join(' + ') || '量の記録なし';
 }
 
+function storageSummary(rows: ShoppingItem[]): string {
+  const current = rows.filter(row => !row.stockKnown || row.stock > 0 || row.spare > 0);
+  const locations = (current.length ? current : rows.slice(-1)).map(row => row.location).filter(Boolean);
+  return [...new Set(locations)].join('・') || '保存場所なし';
+}
+
 function RecipeEditor({ recipe, onSave, onClose }: { recipe: FoodRecipe | null; onSave: (recipe: FoodRecipe) => void; onClose: () => void }) {
   const initialLines = recipe?.ingredients.map(foodIngredientLine).join('\n') ?? '';
   const [title, setTitle] = useState(recipe?.title ?? '');
@@ -92,6 +99,7 @@ export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: Food
   const [filter, setFilter] = useState<'all' | 'today'>('all');
   const [entryMode, setEntryMode] = useState<EntryMode>('current');
   const [entryOpen, setEntryOpen] = useState(false);
+  const [entryKey, setEntryKey] = useState(0);
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('');
   const [unit, setUnit] = useState('個');
@@ -117,6 +125,7 @@ export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: Food
   const todayCount = inventory.filter(item => !item.inventoryOnly && item.purchasedAt === today).length;
 
   const openEntry = (mode: EntryMode, foodName = '', foodUnit = '個') => {
+    setEntryKey(value => value + 1);
     setEntryMode(mode); setName(foodName); setQuantity(''); setUnit(foodUnit); setLocation('冷蔵庫'); setEntryError(''); setEntryOpen(true); setTab('inventory');
     requestAnimationFrame(() => { entryRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' }); nameRef.current?.focus({ preventScroll: true }); });
   };
@@ -168,10 +177,8 @@ export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: Food
       {entryOpen && <div ref={entryRef} className="food-entry-anchor"><form className="food-form" onSubmit={submitEntry}>
         <div className="food-section-heading"><h3>{entryMode === 'current' ? '現在の合計を登録・更新' : '今日買ったものを追加'}</h3><button type="button" className="icon-button" aria-label="食材の入力を閉じる" onClick={() => setEntryOpen(false)}><X size={20} /></button></div>
         <label className="food-field"><span>食材名</span><input ref={nameRef} value={name} onChange={event => { setName(event.target.value); setEntryError(''); }} maxLength={500} placeholder="玉ねぎ" required /></label>
-        <div className="food-two-fields"><label className="food-field"><span>{entryMode === 'current' ? '現在の合計量' : '買った量'}</span><input inputMode="decimal" value={quantity} onChange={event => setQuantity(event.target.value)} maxLength={30} placeholder="不明なら空欄" /></label><label className="food-field"><span>単位</span><input value={unit} onChange={event => setUnit(event.target.value)} maxLength={50} placeholder="個・g・ml" list="food-unit-options" /></label></div>
-        <datalist id="food-unit-options">{['個', '枚', '本', 'パック', '袋', 'g', 'kg', 'ml', 'L', '合', 'かけ', '大さじ', '小さじ'].map(value => <option key={value} value={value} />)}</datalist>
-        <label className="food-field"><span>保存場所</span><input value={location} onChange={event => setLocation(event.target.value)} maxLength={200} list="food-location-options" /></label>
-        <datalist id="food-location-options"><option value="冷蔵庫" /><option value="冷凍庫" /><option value="常温" /></datalist>
+        <div className="food-two-fields"><label className="food-field"><span>{entryMode === 'current' ? '現在の合計量' : '買った量'}</span><input inputMode="decimal" value={quantity} onChange={event => setQuantity(event.target.value)} maxLength={30} placeholder="不明なら空欄" /></label><StoragePicker key={`unit-${entryKey}`} className="food-field" label="単位" kind="unit" value={unit} onChange={setUnit} /></div>
+        <StoragePicker key={`location-${entryKey}`} className="food-field" label="保存場所" kind="location" value={location} onChange={setLocation} />
         {entryMode === 'current' && <p className="food-note">{currentMatches.length ? `${name.trim()}の記録${currentMatches.length}件（${inventorySummary(currentMatches)}）を、新しい合計量で更新します。` : '同じ食材の記録がある場合は、その在庫を新しい合計量に更新します。'} 購入履歴は残ります。</p>}
         {entryMode === 'purchase' && <p className="food-note">購入済み・在庫に1回追加します。すでに購入済みにした品は、重ねて登録しないでください。</p>}
         <p className="food-note">1/2などの分数も入力できます。量が分からない場合は空欄のまま登録できます。</p>
@@ -180,7 +187,7 @@ export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: Food
       </form></div>}
 
       <div className="food-list-heading"><h3>食材一覧</h3><div className="food-filter" aria-label="食材の絞り込み"><button type="button" aria-pressed={filter === 'all'} className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>すべて</button><button type="button" aria-pressed={filter === 'today'} className={filter === 'today' ? 'active' : ''} onClick={() => setFilter('today')}>今日買ったもの {todayCount}</button></div></div>
-      {grouped.size ? <ul className="food-stock-list">{[...grouped.values()].map(group => <li className="food-stock-row" key={group.key}><div><strong>{group.name}</strong><span className="food-amount">{filter === 'today' ? `購入量：${purchaseSummary(group.rows)}` : inventorySummary(group.rows)}</span>{filter === 'today' && <small>現在量：{inventorySummary(inventory.filter(item => foodKey(item.name) === group.key))}</small>}<small>{[...new Set(group.rows.map(row => row.location).filter(Boolean))].join('・') || '保存場所なし'}</small></div><button type="button" className="button secondary" onClick={() => editGroup({ ...group, rows: inventory.filter(item => foodKey(item.name) === group.key) })} aria-label={`${group.name}の現在量を更新`}>量を更新</button></li>)}</ul>
+      {grouped.size ? <ul className="food-stock-list">{[...grouped.values()].map(group => <li className="food-stock-row" key={group.key}><div><strong>{group.name}</strong><span className="food-amount">{filter === 'today' ? `購入量：${purchaseSummary(group.rows)}` : inventorySummary(group.rows)}</span>{filter === 'today' && <small>現在量：{inventorySummary(inventory.filter(item => foodKey(item.name) === group.key))}</small>}<small>{storageSummary(inventory.filter(item => foodKey(item.name) === group.key))}</small></div><button type="button" className="button secondary" onClick={() => editGroup({ ...group, rows: inventory.filter(item => foodKey(item.name) === group.key) })} aria-label={`${group.name}の現在量を更新`}>量を更新</button></li>)}</ul>
         : <p className="food-empty">{filter === 'today' ? '今日の購入記録はありません。' : '食材はまだ登録されていません。「今ある量を登録」から追加できます。'}</p>}
       <button type="button" className="food-text-button" onClick={() => setTab('compare')}>料理に足りるか確認する <ChevronDown size={17} /></button>
     </div>}

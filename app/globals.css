@@ -304,6 +304,10 @@ svg { vertical-align: middle; }
 .field > span:first-child { font-size: 14px; color: #c9c9c9; }
 .field input, .field select, .field textarea { min-width: 0; width: 100%; font-size: 16px; }
 .field-span { grid-column: 1 / -1; }
+.storage-picker { min-width: 0; }
+.storage-picker > label { font-size: 14px; font-weight: 550; }
+.storage-picker > input, .storage-picker > select { min-width: 0; width: 100%; min-height: 46px; font-size: 16px; }
+.storage-picker .picker-custom-label { margin-top: 4px; font-weight: 400; color: var(--muted-foreground); }
 .input-with-suffix { position: relative; min-width: 0; }
 .input-with-suffix input { padding-right: 42px; }
 .input-with-suffix > span { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); color: #b5b5b5; font-size: 14px; pointer-events: none; }

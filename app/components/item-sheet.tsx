@@ -3,6 +3,7 @@ import { useState, type ReactNode } from 'react';
 import { Star, Trash2, Plus, ExternalLink, Paperclip, Package, Check, ArrowUpRight, X } from 'lucide-react';
 import { CATEGORIES, STATUS_LABELS, TODAY, money, finalizePurchaseDraft, recordPurchasedQuantity, setItemStatus, safeUrl, uid, type ShoppingItem, type ItemStatus, type Attachment } from '@/lib/client-model';
 import { Modal } from './modal';
+import { StoragePicker } from './storage-picker';
 function Field({ label, children, span = false }: { label: string; children: ReactNode; span?: boolean }) { return <label className={`field ${span ? 'field-span' : ''}`}><span>{label}</span>{children}</label>; }
 export function ItemSheet({ item, authenticated, onClose, onSave, onDelete, onCopy, onMove, toast }: { item: ShoppingItem; authenticated: boolean; onClose: () => void; onSave: (item: ShoppingItem) => void; onDelete: (id: string) => void; onCopy: (item: ShoppingItem) => void; onMove?: (direction: number) => void; toast: (text: string) => void }) {
   const [draft, setDraft] = useState(item);
@@ -40,7 +41,7 @@ export function ItemSheet({ item, authenticated, onClose, onSave, onDelete, onCo
     <nav className="detail-tabs" aria-label="詳細の種類">{['商品', '購入', '在庫', '共有'].map(name => <button key={name} className={tab === name ? 'active' : ''} onClick={() => setTab(name)}>{name}</button>)}</nav>
     {tab === '商品' && <div className="field-grid">
       <Field label="ステータス" span><select value={draft.status} onChange={e => update('status', e.target.value as ItemStatus)}>{Object.entries(STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-      {numeric('数量', 'quantity', '', '.01')}{text('単位', 'unit', '個・本・袋')}
+      {numeric('数量', 'quantity', '', '.01')}<StoragePicker label="単位" kind="unit" value={draft.unit} onChange={value => update('unit', value)} />
       <Field label="カテゴリ"><select value={draft.category} onChange={e => update('category', e.target.value)}>{CATEGORIES.map(c => <option key={c}>{c}</option>)}</select></Field>{text('購入先', 'store', '店舗・通販')}
       {text('商品URL', 'url', 'https://', 'url', true)}
       {safeUrl(draft.url) && <a className="inline-link field-span" href={safeUrl(draft.url)} target="_blank" rel="noopener noreferrer">商品ページ <ExternalLink size={14} /></a>}
@@ -58,7 +59,7 @@ export function ItemSheet({ item, authenticated, onClose, onSave, onDelete, onCo
     </div>}
     {tab === '購入' && <div className="field-grid">
       {numeric('商品価格', 'price', '円', '.01')}{numeric('上限価格', 'ceiling', '円')}{numeric('送料', 'shipping', '円')}{numeric('割引', 'discount', '円')}{numeric('維持費・消耗品費', 'runningCost', '円')}{text('クーポン', 'coupon')}
-      {numeric('1商品の内容量', 'measure', '', '.01')}{text('内容量の単位', 'measureUnit', 'g・ml・個')}
+      {numeric('1商品の内容量', 'measure', '', '.01')}<StoragePicker label="内容量の単位" kind="unit" value={draft.measureUnit} onChange={value => update('measureUnit', value)} />
       {!!draft.measure && <div className="inline-info field-span">100{draft.measureUnit}あたり {money(draft.price / draft.measure * 100)}</div>}
       {text('クーポン期限', 'couponEnds', '', 'date')}{text('セール終了日', 'saleEnds', '', 'date')}
       <div className="field-span subheading">購入・配送</div>
@@ -83,7 +84,7 @@ export function ItemSheet({ item, authenticated, onClose, onSave, onDelete, onCo
     {tab === '在庫' && <div className="field-grid">
       <label className="field field-span"><span><input type="checkbox" checked={draft.stockKnown} onChange={e => setDraft(old => ({ ...old, stockKnown: e.target.checked, checkedAt: e.target.checked ? TODAY() : old.checkedAt }))} /> 現在の数量を確認済み</span></label>
       {!draft.stockKnown && <p className="field-note field-span">数量は未確認です。0個の確認済み在庫とは分けて表示します。現在量を入力すると確認済みになります。</p>}
-      {numeric('使用中・手持ち', 'stock', draft.unit, '.01')}{numeric('未開封の予備', 'spare', draft.unit, '.01')}{text('保管場所', 'location', '部屋・棚・引き出し', 'text', true)}
+      {numeric('使用中・手持ち', 'stock', draft.unit, '.01')}{numeric('未開封の予備', 'spare', draft.unit, '.01')}<StoragePicker className="field field-span" label="保管場所" kind="location" value={draft.location} onChange={value => update('location', value)} />
       {numeric('確認した残量', 'remaining', '%')}{text('在庫確認日', 'checkedAt', '', 'date')}
       <button className="button secondary field-span" onClick={() => setDraft(old => ({ ...old, stockKnown: true, checkedAt: TODAY() }))}><Check size={15} />今日の在庫を確認</button>
       {text('使用・賞味期限', 'expiry', '', 'date')}{text('開封日', 'openedAt', '', 'date')}{text('使い切った日', 'usedUpAt', '', 'date')}
