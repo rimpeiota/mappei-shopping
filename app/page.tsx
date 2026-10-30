@@ -7,6 +7,8 @@ import { ItemSheet } from './components/item-sheet';
 import { Modal } from './components/modal';
 import { QuickComposer } from './components/quick-composer';
 import { FoodPanel } from './components/food-panel';
+import { applyCooking, undoCooking } from '@/lib/client-cooking';
+import type { FoodRecipe } from '@/lib/client-food';
 import './food.css';
 const MODES: { id: Mode; label: string; icon: typeof ShoppingBag }[] = [ { id: 'list', label: 'リスト', icon: ShoppingBag }, { id: 'stock', label: '在庫', icon: Package }, { id: 'history', label: '履歴', icon: History }, { id: 'favorites', label: 'お気に入り', icon: Star }, { id: 'settings', label: '設定', icon: SlidersHorizontal } ];
 const CATEGORY_ICON: Record<string, typeof Package> = { '食品': Utensils, '日用品': Box, '衣類': Shirt, '家電': Zap, '家具': Armchair, 'その他': Package };
@@ -132,6 +134,28 @@ export default function Home() {
     return result;
   }, [active, stock, completed, favorites, mode, filter, category, storeFilter, dateFilter, search, sort]);
   const change = (items: ShoppingItem[], text: string, undo = true) => { const before = state; commit(old => ({ ...old, items, activity: [{ id: uid(), text, at: new Date().toISOString() }, ...old.activity].slice(0, 200) })); notify(text, undo ? before : undefined); };
+  const cookRecipe = (recipe: FoodRecipe, targetServings: number, id: string) => {
+    let message = 'この料理は反映済みです';
+    commit(old => {
+      const result = applyCooking(old.items, old.cookingHistory, recipe, targetServings, id);
+      if (result.error) { message = result.error; return old; }
+      if (result.items === old.items) return old;
+      const count = result.record?.rows.filter(row => row.status === 'ready').length ?? 0;
+      message = `${recipe.title}の材料${count}件を在庫から減らしました`;
+      return { ...old, items: result.items, cookingHistory: result.history, activity: [{ id: uid(), text: message, at: new Date().toISOString() }, ...old.activity].slice(0, 200) };
+    });
+    notify(message);
+  };
+  const undoCook = (id: string) => {
+    let message = '料理の反映を取り消しました';
+    commit(old => {
+      const result = undoCooking(old.items, old.cookingHistory, id);
+      if (result.error) { message = result.error; return old; }
+      if (result.items === old.items) return old;
+      return { ...old, items: result.items, cookingHistory: result.history, activity: [{ id: uid(), text: message, at: new Date().toISOString() }, ...old.activity].slice(0, 200) };
+    });
+    notify(message);
+  };
   const updateItem = (id: string, patch: Partial<ShoppingItem>, text: string) => change(state.items.map(item => item.id === id ? { ...item, ...patch, updatedAt: new Date().toISOString() } : item), text);
 
   const copyItem = (item: ShoppingItem) => { const copy = newItem(item.name, { ...item, id: uid(), status: 'planned', listDate: TODAY(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), purchasedAt: '', purchasedQuantity: 0, stock: 0, spare: 0, checkedAt: '', inventoryOnly: false, stockKnown: true, inventorySource: '', stockReconciledQuantity: 0, attachments: [], prices: [] }); change([...state.items, copy], `${item.name}をリストに追加`); setEditing(null); setMode('list'); };
@@ -219,7 +243,7 @@ export default function Home() {
           <div className="page-heading"><h1>{mode === 'list' ? '買い物リスト' : MODES.find(row => row.id === mode)?.label}</h1><div className="heading-actions">{mode !== 'settings' && mode !== 'stock' && <button className="text-button" aria-label="商品を検索" aria-expanded={showSearch} onClick={() => setShowSearch(value => !value)}><Search size={19} /><span>検索</span></button>}<button className="text-button" aria-label="その他の操作" onClick={() => setModal('tools')}><MoreHorizontal size={20} /><span>その他</span></button></div></div>
           {previousAccountLocal && <p className="inline-info">この端末の記録を表示しています。ログインを確認してから同期します。</p>}
       {mode === 'list' && <QuickComposer key={storageScope} value={quick} onChange={setQuick} onSubmit={() => void addQuick()} inputRef={inputRef} aiPending={aiPending} scope={storageScope} />}
-          {mode === 'stock' && <FoodPanel key={storageScope} items={state.items} recipe={state.mealRecipe} onItems={change} onRecipe={recipe => { const before = state; commit(old => ({ ...old, mealRecipe: recipe })); notify(recipe ? '材料を保存しました' : '材料を解除しました', before); }} onShowList={() => switchMode('list')} onEditItem={setEditing} />}
+          {mode === 'stock' && <FoodPanel key={storageScope} items={state.items} recipe={state.mealRecipe} cookingHistory={state.cookingHistory} onCook={cookRecipe} onUndoCooking={undoCook} onItems={change} onRecipe={recipe => { const before = state; commit(old => ({ ...old, mealRecipe: recipe })); notify(recipe ? '材料を保存しました' : '材料を解除しました', before); }} onShowList={() => switchMode('list')} onEditItem={setEditing} />}
           {mode === 'stock' && <details className="detail-advanced food-stock-details"><summary>在庫の詳細・日用品</summary><p className="field-note">買い足し候補 {restocks.length}件 · 7日以内の期限 {ending.length}件</p><button className="button secondary" onClick={createStock}><Plus size={18} />その他の在庫を登録</button><div className="items-list" aria-label="在庫の詳細">{stock.map(item => <ItemCard key={item.id} item={item} inventory onEdit={() => setEditing(item)} onStatus={() => toggleItem(item)} onRestock={isRestock(item) ? () => copyItem(item) : undefined} onName={name => updateItem(item.id, { name }, '商品名を保存しました')} />)}</div></details>}
           {status === 'upgrade' && <p className="inline-info" role="alert">新しい機能の保存形式に更新されました。端末のメモは残っています。<button className="text-button" onClick={() => window.location.reload()}>画面を再読み込み</button></p>}
           {mode !== 'settings' && mode !== 'stock' && <>

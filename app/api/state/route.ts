@@ -31,9 +31,9 @@ export async function PUT(request: Request): Promise<Response> {
     // This is a continuity check, not an ownership selector: the trusted header still owns the row.
     if (body.owner !== owner) throw new ApiError(403, "アカウントが切り替わりました。画面を再読み込みしてください。");
     if (!isRecord(body.state)) throw new ApiError(400, "保存するデータの形式を確認してください。");
-    // Older clients discard recipe/inventory fields while reading a v2 snapshot.
+    // Older clients discard recipe/inventory/cooking fields while reading a newer snapshot.
     // Reject their writes before they can replace the account's complete state.
-    if (body.state.version !== 2) throw new ApiError(426, "アプリの更新が必要です。端末のメモは残っています。画面を再読み込みしてください。");
+    if (body.state.version !== 3) throw new ApiError(426, "アプリの更新が必要です。端末のメモは残っています。画面を再読み込みしてください。");
     const pending: Array<{ value: unknown; depth: number }> = [{ value: body.state, depth: 0 }];
     while (pending.length) {
       const current = pending.pop()!;

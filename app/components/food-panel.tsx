@@ -1,17 +1,22 @@
 'use client';
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useCallback, useRef, useState, type FormEvent } from 'react';
 import { Check, ChevronDown, ClipboardList, ExternalLink, Plus, Refrigerator, X } from 'lucide-react';
-import { safeUrl, TODAY, validateFoodRecipe, type ShoppingItem } from '@/lib/client-model';
+import { safeUrl, TODAY, uid, validateFoodRecipe, type ShoppingItem } from '@/lib/client-model';
 import { compareFood, foodKey, formatFoodQuantity, GRATIN_RECIPE, type FoodRecipe } from '@/lib/client-food';
 import { addFoodShortages, addPurchasedFood, editedFoodIngredients, foodIngredientLine, setCurrentFood } from '@/lib/client-food-actions';
+import { cookingRecipeKey, planCooking, type CookingRecord } from '@/lib/client-cooking';
+import { Modal } from './modal';
 import { StoragePicker } from './storage-picker';
 
 type FoodPanelProps = {
   items: ShoppingItem[];
   recipe: FoodRecipe | null;
+  cookingHistory: CookingRecord[];
   onItems: (next: ShoppingItem[], message: string) => void;
   onRecipe: (next: FoodRecipe | null) => void;
+  onCook: (recipe: FoodRecipe, targetServings: number, id: string) => void;
+  onUndoCooking: (id: string) => void;
   onShowList: () => void;
   onEditItem: (item: ShoppingItem) => void;
 };
@@ -94,7 +99,7 @@ function RecipeEditor({ recipe, onSave, onClose }: { recipe: FoodRecipe | null; 
   </form>;
 }
 
-export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: FoodPanelProps) {
+export function FoodPanel({ items, recipe, cookingHistory, onItems, onRecipe, onCook, onUndoCooking, onShowList }: FoodPanelProps) {
   const [tab, setTab] = useState<'inventory' | 'compare'>('inventory');
   const [filter, setFilter] = useState<'all' | 'today'>('all');
   const [entryMode, setEntryMode] = useState<EntryMode>('current');
@@ -106,6 +111,9 @@ export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: Food
   const [location, setLocation] = useState('冷蔵庫');
   const [entryError, setEntryError] = useState('');
   const [recipeEditing, setRecipeEditing] = useState(false);
+  const [cookingIntent, setCookingIntent] = useState<{ id: string; recipe: FoodRecipe } | null>(null);
+  const cookingSubmitting = useRef(false);
+  const closeCooking = useCallback(() => setCookingIntent(null), []);
   const entryRef = useRef<HTMLDivElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const today = TODAY();
@@ -123,6 +131,26 @@ export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: Food
   const comparison = recipe ? compareFood(recipe, items, 2) : [];
   const additions = comparison.filter(row => row.status === 'shortage' && row.toBuy !== null && row.toBuy > 0);
   const todayCount = inventory.filter(item => !item.inventoryOnly && item.purchasedAt === today).length;
+  const recipeKey = recipe ? cookingRecipeKey(recipe) : '';
+  const lastCooking = cookingHistory.find(record => record.recipeKey === recipeKey);
+  const latestActiveCooking = cookingHistory.find(record => !record.undoneAt);
+  const alreadyCooked = !!lastCooking && !lastCooking.undoneAt;
+  const cookingPlan = cookingIntent ? planCooking(cookingIntent.recipe, items, 2) : null;
+  const readyCookingRows = cookingPlan?.rows.filter(row => row.status === 'ready') ?? [];
+  const skippedCookingRows = cookingPlan?.rows.filter(row => row.status === 'check') ?? [];
+
+  const openCooking = () => {
+    if (!recipe) return;
+    cookingSubmitting.current = false;
+    setCookingIntent({ id: uid(), recipe });
+  };
+
+  const confirmCooking = () => {
+    if (!cookingIntent || !readyCookingRows.length || cookingSubmitting.current) return;
+    cookingSubmitting.current = true;
+    onCook(cookingIntent.recipe, 2, cookingIntent.id);
+    closeCooking();
+  };
 
   const openEntry = (mode: EntryMode, foodName = '', foodUnit = '個') => {
     setEntryKey(value => value + 1);
@@ -200,6 +228,22 @@ export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: Food
         <div className="food-recipe-heading"><h3>{recipe.title}</h3><span>2人分</span></div>
         {safeUrl(recipe.url) && <a className="food-source-link" href={safeUrl(recipe.url)} target="_blank" rel="noopener noreferrer">出典を見る <ExternalLink size={15} /></a>}
         <p className="food-note">比較だけでは在庫は減りません。gとkg、mlとLは換算します。パックとgなど、換算できない量は確認が必要です。</p>
+        <div className="food-cooking" aria-label="料理を作った記録">
+          <div className="food-cooking-actions">
+            <button type="button" className="button primary" disabled={alreadyCooked} onClick={openCooking}><Check size={18} />{alreadyCooked ? 'この料理は在庫へ反映済み' : '作った・在庫を減らす'}</button>
+            {alreadyCooked && <button type="button" className="button secondary" onClick={openCooking}>もう一度作る</button>}
+          </div>
+          <p className="food-note">作ったあとに押すと、2人分の使用量を確認できます。</p>
+          {lastCooking && <div className="food-cooking-receipt" role="status">
+            <strong>{lastCooking.undoneAt ? '前回の調理は取り消し済み' : '在庫へ反映済み'}</strong>
+            <p>{new Date(lastCooking.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}・{lastCooking.targetServings}人分・{lastCooking.rows.filter(row => row.status === 'ready').length}件の材料</p>
+            {!lastCooking.undoneAt && lastCooking.rows.some(row => row.status === 'check') && <p>量などの確認が必要な{lastCooking.rows.filter(row => row.status === 'check').length}件は減らしていません。</p>}
+            {!lastCooking.undoneAt && <>
+              <button type="button" className="button secondary" disabled={latestActiveCooking?.id !== lastCooking.id} onClick={() => onUndoCooking(lastCooking.id)}>この調理を取り消して在庫を戻す</button>
+              {latestActiveCooking?.id !== lastCooking.id && <p className="food-note">あとで作った料理を取り消してから戻せます。</p>}
+            </>}
+          </div>}
+        </div>
         <ul className="food-comparison-list">{comparison.map((row, index) => <li className={`food-comparison-row food-status-${row.status}`} key={`${foodKey(row.name)}-${index}`}>
           <div className="food-comparison-heading"><strong>{row.name}</strong><span className="food-result">{row.status === 'enough' ? '足りる' : row.status === 'shortage' ? `不足 ${formatFoodQuantity(row.shortage ?? 0, row.unit)}` : '量を確認'}</span></div>
           <p className="food-comparison-amounts">必要：{row.required === null ? '要確認' : formatFoodQuantity(row.required, row.unit)}<span>{row.status === 'check' ? `在庫：要確認${row.have > 0 ? `（確認できた量 ${formatFoodQuantity(row.have, row.unit)}）` : ''}` : `在庫：${formatFoodQuantity(row.have, row.unit)}`}</span></p>
@@ -212,5 +256,24 @@ export function FoodPanel({ items, recipe, onItems, onRecipe, onShowList }: Food
         <details className="food-recipe-more"><summary>料理の切り替え・解除</summary><div className="food-recipe-actions"><button type="button" className="button secondary" onClick={() => onRecipe(GRATIN_RECIPE)}>今回のグラタンを使う</button><button type="button" className="button secondary" onClick={() => onRecipe(null)}>料理の比較を解除</button></div></details>
       </>}
     </div>}
+    {cookingIntent && cookingPlan && <Modal title="料理の使用量を確認" onClose={closeCooking} footer={<>
+      <button type="button" className="button secondary" onClick={closeCooking}>取消</button>
+      <button type="button" className="button primary" disabled={!readyCookingRows.length} onClick={confirmCooking}>{readyCookingRows.length}件の材料を在庫から減らす</button>
+    </>}>
+      <div className="food-cooking-preview">
+        <h3>{cookingIntent.recipe.title}・2人分</h3>
+        <p className="food-note">使用量と、減らしたあとの在庫を確認してください。購入履歴は残ります。</p>
+        <ul className="food-cooking-list" aria-label="使用する材料">{cookingPlan.rows.map((row, index) => <li className={`food-cooking-row food-cooking-${row.status}`} key={`${foodKey(row.name)}-${index}`}>
+          <div className="food-cooking-row-heading"><strong>{row.name}</strong><span>{row.status === 'ready' ? <><Check size={16} aria-hidden="true" />減らす</> : '今回は減らさない'}</span></div>
+          {row.status === 'ready' ? <>
+            <p>使用：{formatFoodQuantity(row.quantity ?? 0, row.unit)}</p>
+            <p className="food-cooking-balance">在庫 {formatFoodQuantity(row.before, row.unit)} → {formatFoodQuantity(row.after, row.unit)}</p>
+          </> : null}
+          {row.detail && <p className="food-note">{row.detail}</p>}
+        </li>)}</ul>
+        {skippedCookingRows.length > 0 && <p className="food-note">量が分からない、単位が合わない、在庫が足りない材料は減らしません（{skippedCookingRows.length}件）。在庫や材料の量を確認して更新してください。</p>}
+        {!readyCookingRows.length && <p className="food-error" role="status">減らせる材料がありません。在庫と材料の量を確認してください。</p>}
+      </div>
+    </Modal>}
   </section>;
 }

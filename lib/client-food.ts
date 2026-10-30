@@ -106,7 +106,7 @@ export function formatFoodQuantity(quantity: number | null, unit: string): strin
   return normalized === '大さじ' || normalized === '小さじ' ? `${normalized}${display}` : `${display}${normalized}`;
 }
 
-function convert(quantity: number, from: string, to: string): number | null {
+export function convertFoodQuantity(quantity: number, from: string, to: string): number | null {
   if (!validAmount(quantity)) return null;
   const source = normalizedUnit(from), target = normalizedUnit(to);
   if (source === target) return quantity;
@@ -139,7 +139,7 @@ export function compareFood(recipe: FoodRecipe, items: ShoppingItem[], targetSer
     for (const ingredient of ingredients) {
       if (required === null) break;
       if (!servingsKnown || !validAmount(ingredient.quantity)) { required = null; break; }
-      const amount = convert(ingredient.quantity, ingredient.unit, unit);
+      const amount = convertFoodQuantity(ingredient.quantity, ingredient.unit, unit);
       const scaled = amount === null ? null : amount * targetServings / recipe.servings!;
       required = scaled !== null && validAmount(scaled) ? safeSum(required, scaled) : null;
     }
@@ -155,7 +155,7 @@ export function compareFood(recipe: FoodRecipe, items: ShoppingItem[], targetSer
         stockConfirmed = true;
         const total = safeSum(item.stock, item.spare);
         // An explicitly confirmed zero remains zero even when an old row used another unit.
-        const converted = total === 0 ? 0 : total === null ? null : convert(total, item.unit, unit);
+        const converted = total === 0 ? 0 : total === null ? null : convertFoodQuantity(total, item.unit, unit);
         const sum = converted === null ? null : safeSum(have, converted);
         if (sum === null) stockUnknown = true;
         else have = sum;
@@ -165,7 +165,7 @@ export function compareFood(recipe: FoodRecipe, items: ShoppingItem[], targetSer
       if (!validAmount(item.quantity) || !validAmount(item.purchasedQuantity)) { plannedUnknown = true; continue; }
       const remaining = cleanNumber(Math.max(0, item.quantity - item.purchasedQuantity));
       if (remaining === 0) continue;
-      const converted = convert(remaining, item.unit, unit);
+      const converted = convertFoodQuantity(remaining, item.unit, unit);
       const sum = converted === null ? null : safeSum(planned, converted);
       if (sum === null) plannedUnknown = true;
       else planned = sum;

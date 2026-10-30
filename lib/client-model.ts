@@ -1,4 +1,5 @@
 import type { FoodRecipe } from './client-food';
+import { validateCookingHistory, type CookingRecord } from './client-cooking.ts';
 
 export type ItemStatus = 'planned' | 'considering' | 'cart' | 'ordered' | 'purchased' | 'received' | 'snoozed' | 'returned' | 'exchanged' | 'cancelled';
 export type Mode = 'list' | 'stock' | 'history' | 'favorites' | 'settings';
@@ -19,7 +20,7 @@ export type ShoppingItem = {
 };
 export type Template = { id: string; name: string; items: Pick<ShoppingItem, 'name' | 'quantity' | 'unit' | 'category' | 'store'>[] };
 export type Activity = { id: string; text: string; at: string };
-export type ShoppingState = { version: 2; items: ShoppingItem[]; templates: Template[]; activity: Activity[]; mealRecipe: FoodRecipe | null; settings: { budget: number; reducedMotion: boolean; defaultStore: string; name: string } };
+export type ShoppingState = { version: 3; items: ShoppingItem[]; templates: Template[]; activity: Activity[]; mealRecipe: FoodRecipe | null; cookingHistory: CookingRecord[]; settings: { budget: number; reducedMotion: boolean; defaultStore: string; name: string } };
 export type ShoppingCache = { state: ShoppingState; revision: number; dirty: boolean; legacyDirty: boolean };
 export const STATUS_LABELS: Record<ItemStatus, string> = { planned: '買う予定', considering: '検討中', cart: 'かごの中', ordered: '注文済み', purchased: '購入済み', received: '受取済み', snoozed: '次回', returned: '返品', exchanged: '交換', cancelled: '取消' };
 export const CATEGORIES = ['食品', '日用品', '衣類', '家電', '家具', 'その他'];
@@ -27,7 +28,7 @@ export const COMPLETE: ItemStatus[] = ['purchased', 'received', 'returned', 'exc
 export const TODAY = () => new Date().toLocaleDateString('sv-SE');
 export const uid = () => globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 export const money = (value: number) => new Intl.NumberFormat('ja-JP', { style: 'currency', currency: 'JPY', maximumFractionDigits: 0 }).format(value || 0);
-export const emptyState = (): ShoppingState => ({ version: 2, items: [], templates: [], activity: [], mealRecipe: null, settings: { budget: 0, reducedMotion: false, defaultStore: '', name: '' } });
+export const emptyState = (): ShoppingState => ({ version: 3, items: [], templates: [], activity: [], mealRecipe: null, cookingHistory: [], settings: { budget: 0, reducedMotion: false, defaultStore: '', name: '' } });
 export function newItem(name: string, fields: Partial<ShoppingItem> = {}): ShoppingItem {
   const now = new Date().toISOString();
   return { id: uid(), name, quantity: 1, unit: '個', category: 'その他', store: '', status: 'planned', createdAt: now, updatedAt: now, listDate: TODAY(), favorite: false,
@@ -132,16 +133,18 @@ export function validateFoodRecipe(input: unknown): FoodRecipe | null {
   return { title: value.title.trim().slice(0, 500), url, servings: value.servings as number | null, ingredients };
 }
 export function hasShoppingData(state: ShoppingState): boolean {
-  return state.items.length > 0 || state.templates.length > 0 || state.mealRecipe !== null;
+  return state.items.length > 0 || state.templates.length > 0 || state.mealRecipe !== null || state.cookingHistory.length > 0;
 }
 // Called only after the person chooses to add their anonymous notes to this account.
 // Keep the account's current recipe when both have one; retain a local-only recipe.
 export function mergeAnonymousState(account: ShoppingState, local: ShoppingState): ShoppingState {
   const ids = new Set(account.items.map(item => item.id));
   const templateIds = new Set(account.templates.map(template => template.id));
+  const cookingIds = new Set(account.cookingHistory.map(record => record.id));
   return { ...account, items: [...account.items, ...local.items.filter(item => !ids.has(item.id))],
     templates: [...account.templates, ...local.templates.filter(template => !templateIds.has(template.id))],
-    activity: [...local.activity, ...account.activity].slice(0, 200), mealRecipe: account.mealRecipe ?? local.mealRecipe };
+    activity: [...local.activity, ...account.activity].slice(0, 200), mealRecipe: account.mealRecipe ?? local.mealRecipe,
+    cookingHistory: [...account.cookingHistory, ...local.cookingHistory.filter(record => !cookingIds.has(record.id))].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 50) };
 }
 export function validateShoppingCache(input: unknown): ShoppingCache | null {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
@@ -150,21 +153,23 @@ export function validateShoppingCache(input: unknown): ShoppingCache | null {
   if (!state) return null;
   const sourceVersion = value.state && typeof value.state === 'object' ? (value.state as { version?: unknown }).version : undefined;
   return { state, revision: typeof value.revision === 'number' && Number.isSafeInteger(value.revision) && value.revision >= 0 ? value.revision : 0,
-    dirty: value.dirty === true, legacyDirty: value.legacyDirty === true || (value.dirty === true && sourceVersion === 1) };
+    dirty: value.dirty === true, legacyDirty: value.legacyDirty === true || (value.dirty === true && (sourceVersion === 1 || sourceVersion === 2)) };
 }
 export function cacheNeedsReview(cache: ShoppingCache, remote: unknown, remoteRevision: number): boolean {
   const remoteVersion = remote && typeof remote === 'object' ? (remote as { version?: unknown }).version : undefined;
-  // v1 clients may cache an empty interpretation of v2 at the latest revision.
+  // Older clients may omit recipe or cooking records at the latest revision.
   // Revision equality alone therefore cannot make their pending writes safe.
-  return cache.dirty && (cache.revision !== remoteRevision || (cache.legacyDirty && remoteVersion === 2));
+  return cache.dirty && (cache.revision !== remoteRevision || (cache.legacyDirty && (remoteVersion === 2 || remoteVersion === 3)));
 }
 export function validateState(input: unknown): ShoppingState | null {
   if (!input || typeof input !== 'object') return null;
   const value = input as Partial<Omit<ShoppingState, 'version'>> & { version?: unknown };
-  if ((value.version !== 1 && value.version !== 2) || !Array.isArray(value.items) || value.items.length > 10000) return null;
+  if ((value.version !== 1 && value.version !== 2 && value.version !== 3) || !Array.isArray(value.items) || value.items.length > 10000) return null;
   if (!value.items.every(item => item && typeof item.name === 'string' && typeof item.id === 'string' && item.name.length <= 500 && item.id.length <= 200)) return null;
   if (new Set(value.items.map(item => item.id)).size !== value.items.length) return null;
   const blank = emptyState();
+  const cookingHistory = value.version === 3 ? validateCookingHistory(value.cookingHistory ?? []) : [];
+  if (!cookingHistory) return null;
   const boundedString = (v: unknown, max = 1000) => typeof v === 'string' ? v.slice(0, max) : '';
   const boundedNumber = (v: unknown) => typeof v === 'number' && Number.isFinite(v) ? Math.min(1e9, Math.max(0, v)) : 0;
   const items = value.items.map(item => {
@@ -184,7 +189,7 @@ export function validateState(input: unknown): ShoppingState | null {
   const templates = Array.isArray(value.templates) ? value.templates.filter(t => t && typeof t.id === 'string' && typeof t.name === 'string' && Array.isArray(t.items)).slice(0, 500).map(t => ({ id: boundedString(t.id, 200), name: boundedString(t.name, 200), items: t.items.filter(i => i && typeof i.name === 'string').slice(0, 1000).map(i => ({ name: boundedString(i.name, 500), quantity: boundedNumber(i.quantity) || 1, unit: boundedString(i.unit, 50) || '個', category: boundedString(i.category, 100) || 'その他', store: boundedString(i.store, 200) })) })) : [];
   const activity = Array.isArray(value.activity) ? value.activity.filter(a => a && typeof a.text === 'string' && typeof a.at === 'string').slice(0, 200).map(a => ({ id: boundedString(a.id, 200) || uid(), text: boundedString(a.text, 2000), at: boundedString(a.at, 100) })) : [];
   const settings = value.settings || blank.settings;
-  return { version: 2, items, templates, activity, mealRecipe: validateFoodRecipe(value.mealRecipe), settings: { budget: boundedNumber(settings.budget), reducedMotion: settings.reducedMotion === true, name: boundedString(settings.name, 80), defaultStore: boundedString(settings.defaultStore, 200) } };
+  return { version: 3, items, templates, activity, mealRecipe: validateFoodRecipe(value.mealRecipe), cookingHistory, settings: { budget: boundedNumber(settings.budget), reducedMotion: settings.reducedMotion === true, name: boundedString(settings.name, 80), defaultStore: boundedString(settings.defaultStore, 200) } };
 }
 export function safeUrl(value: string) { try { const u = new URL(value); return ['https:', 'http:'].includes(u.protocol) && !u.username && !u.password ? u.toString() : ''; } catch { return ''; } }
 export function itemTotal(item: ShoppingItem) { return Math.max(0, item.price * item.quantity + item.shipping - item.discount); }
