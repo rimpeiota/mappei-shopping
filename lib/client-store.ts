@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { cacheNeedsReview, emptyState, hasShoppingData, mergeAnonymousState, validateShoppingCache, validateState, type ShoppingCache, type ShoppingState } from './client-model';
+import { cacheNeedsReview, emptyState, hasShoppingData, mergeAnonymousState, readRemoteSnapshot, validateShoppingCache, type ShoppingCache, type ShoppingState } from './client-model';
 const PREFIX = 'mappei-shopping-v1';
 const ANONYMOUS_KEY = `${PREFIX}:anonymous`;
 const LAST_OWNER_KEY = `${PREFIX}:last-owner`;
@@ -10,8 +10,10 @@ type Cache = ShoppingCache;
 type Conflict = { kind: 'conflict' | 'migration'; state: ShoppingState; revision: number; owner: string; legacy?: boolean };
 type StateResponse = { state?: unknown; revision?: number; owner?: string };
 function readCache(key: string): Cache | null {
-  const raw = localStorage.getItem(key); if (!raw) return null;
-  return validateShoppingCache(JSON.parse(raw));
+  const raw = localStorage.getItem(key); if (raw === null) return null;
+  const cache = validateShoppingCache(JSON.parse(raw));
+  if (!cache) throw new Error('Unrecognized shopping cache');
+  return cache;
 }
 function hasData(cache: Cache) { return hasShoppingData(cache.state) || cache.dirty; }
 export function useShoppingStore() {
@@ -37,7 +39,10 @@ export function useShoppingStore() {
   const key = useRef(ANONYMOUS_KEY);
   const connectionSequence = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const storageReadBlocked = useRef(false);
   const persist = useCallback(() => {
+    // Do not replace unreadable originals with edits based on an empty screen.
+    if (storageReadBlocked.current) { setStorageError(true); return; }
     try { localStorage.setItem(key.current, JSON.stringify({ state: stateRef.current, revision: revision.current, dirty: dirty.current, legacyDirty: legacyDirty.current } satisfies Cache)); setStorageError(false); }
     catch { setStorageError(true); }
   }, []);
@@ -54,7 +59,13 @@ export function useShoppingStore() {
       if (response.status === 401 || response.status === 403) { enabled.current = false; owner.current = ''; setAuthenticated(false); setPreviousAccountLocal(key.current !== ANONYMOUS_KEY); setStatus('local'); return; }
       if (response.status === 426) { upgradeRequired.current = true; enabled.current = false; paused.current = true; persist(); setStatus('upgrade'); return; }
       const result = await response.json() as StateResponse;
-      if (response.status === 409) { const remote = validateState(result.state); if (remote) { setConflict({ kind: 'conflict', state: remote, revision: Number(result.revision) || 0, owner: owner.current }); enabled.current = false; paused.current = true; setStatus('conflict'); } else setStatus('error'); return; }
+      if (response.status === 409) {
+        enabled.current = false; paused.current = true;
+        const remote = readRemoteSnapshot(result.state, result.revision);
+        if (remote) { setConflict({ kind: 'conflict', state: remote, revision: result.revision!, owner: owner.current }); setStatus('conflict'); }
+        else setStatus('error');
+        return;
+      }
       if (!response.ok) throw new Error('sync');
       revision.current = Number(result.revision) || 0;
       dirty.current = sentVersion !== version.current;
@@ -64,6 +75,7 @@ export function useShoppingStore() {
     finally { saving.current = false; }
   }, [persist]);
   const connect = useCallback(async () => {
+    if (storageReadBlocked.current) { enabled.current = false; paused.current = true; setStorageError(true); setStatus('error'); return; }
     if (paused.current || !navigator.onLine) { if (!paused.current) setStatus('offline'); return; }
     const sequence = ++connectionSequence.current;
     // A fresh GET must confirm the current authenticated owner before any queued PUT.
@@ -78,11 +90,13 @@ export function useShoppingStore() {
       if (!result.owner) { setStatus('error'); return; }
       const confirmedOwner = result.owner;
       const confirmedKey = ownerKey(confirmedOwner);
-      const remote = validateState(result.state) || emptyState();
-      const remoteRevision = Number(result.revision) || 0;
+      const remote = readRemoteSnapshot(result.state, result.revision);
+      if (!remote) { paused.current = true; setStatus('error'); return; }
+      const remoteRevision = result.revision!;
       let accountCache: Cache | null = key.current === confirmedKey ? { state: stateRef.current, revision: revision.current, dirty: dirty.current, legacyDirty: legacyDirty.current } : null;
       let anonymousCache: Cache | null = key.current === ANONYMOUS_KEY ? { state: stateRef.current, revision: revision.current, dirty: dirty.current, legacyDirty: legacyDirty.current } : null;
-      try { accountCache ||= readCache(confirmedKey); anonymousCache ||= readCache(ANONYMOUS_KEY); } catch { setStorageError(true); }
+      try { accountCache ||= readCache(confirmedKey); anonymousCache ||= readCache(ANONYMOUS_KEY); }
+      catch { storageReadBlocked.current = true; setStorageError(true); paused.current = true; setStatus('error'); return; }
       setAuthenticated(true); setPreviousAccountLocal(false);
       if (accountCache && cacheNeedsReview(accountCache, result.state, remoteRevision)) {
         owner.current = confirmedOwner; key.current = confirmedKey; setStorageScope(confirmedKey);
@@ -127,7 +141,7 @@ export function useShoppingStore() {
           if (cache === account && lastOwner) { key.current = ownerKey(lastOwner); setStorageScope(key.current); setPreviousAccountLocal(true); }
           stateRef.current = cache.state; setState(cache.state); revision.current = cache.revision; dirty.current = cache.dirty; legacyDirty.current = cache.legacyDirty;
         }
-      } catch { setStorageError(true); }
+      } catch { storageReadBlocked.current = true; setStorageError(true); }
       void connect();
     });
     const visible = setTimeout(() => { if (active) setReady(true); }, 320);

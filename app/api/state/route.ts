@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { ApiError, apiError, isRecord, json, readJson, requireOwner, requireSameOrigin } from "@/lib/server-http";
+import { validateState } from "@/lib/client-model";
 
 export const dynamic = "force-dynamic";
 const MAX_STATE_BYTES = 1024 * 1024;
@@ -45,6 +46,10 @@ export async function PUT(request: Request): Promise<Response> {
     if (!Number.isSafeInteger(body.revision) || (body.revision as number) < 0) throw new ApiError(400, "保存バージョンの形式を確認してください。");
     const serialized = JSON.stringify(body.state);
     if (new TextEncoder().encode(serialized).byteLength > MAX_STATE_BYTES) throw new ApiError(413, "保存できるデータは1MBまでです。バックアップして記録を整理してください。");
+    const readable = validateState(body.state);
+    if (!readable || (body.state.mealRecipe != null && !readable.mealRecipe)) {
+      throw new ApiError(400, "保存データを読み戻せないため変更しませんでした。端末のバックアップを保存して内容を確認してください。");
+    }
     const revision = body.revision as number;
     const db = database();
     const now = new Date().toISOString();

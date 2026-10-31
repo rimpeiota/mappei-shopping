@@ -31,8 +31,13 @@ export const money = (value: number) => new Intl.NumberFormat('ja-JP', { style: 
 export const emptyState = (): ShoppingState => ({ version: 3, items: [], templates: [], activity: [], mealRecipe: null, cookingHistory: [], settings: { budget: 0, reducedMotion: false, defaultStore: '', name: '' } });
 export function newItem(name: string, fields: Partial<ShoppingItem> = {}): ShoppingItem {
   const now = new Date().toISOString();
-  return { id: uid(), name, quantity: 1, unit: '個', category: 'その他', store: '', status: 'planned', createdAt: now, updatedAt: now, listDate: TODAY(), favorite: false,
+  const originalName = fields.name ?? name;
+  const originalComment = fields.comment ?? '';
+  const comment = originalName.length > 500 && !originalComment.includes(originalName)
+    ? [originalName, originalComment].filter(Boolean).join('\n\n').slice(0, 20000) : originalComment;
+  const item: ShoppingItem = { id: uid(), name, quantity: 1, unit: '個', category: 'その他', store: '', status: 'planned', createdAt: now, updatedAt: now, listDate: TODAY(), favorite: false,
     brand: '', model: '', color: '', size: '', capacity: '', aliases: '', url: '', price: 0, ceiling: 0, shipping: 0, discount: 0, runningCost: 0, measure: 0, measureUnit: 'g', coupon: '', couponEnds: '', saleEnds: '', holdUntil: '', group: '', compatibility: '', purchasedQuantity: 0, purchasedAt: '', deliveryDate: '', returnUntil: '', warrantyUntil: '', subscriptionDate: '', subscriptionQuantity: 1, subscriptionEvery: 30, manualUrl: '', stock: 0, spare: 0, location: '', remaining: 100, checkedAt: '', expiry: '', openedAt: '', usedUpAt: '', consumptionPerDay: 0, restockThreshold: 1, restockSnooze: '', inventoryOnly: false, stockKnown: true, inventorySource: '', stockReconciledQuantity: 0, assignee: '', requester: '', requestedDate: '', shared: false, comment: '', rating: '', rebuy: '', prices: [], attachments: [], ...fields };
+  return { ...item, name: originalName.slice(0, 500), comment };
 }
 export function guessCategory(name: string): string {
   if (/牛乳|卵|パン|肉|魚|野菜|米|水|コーヒー|豆|バナナ|りんご|チーズ|ヨーグルト|冷凍|トマト|塩|醤油|味噌|茶|ビール|パスタ|白菜|キャベツ|キムチ/.test(name)) return '食品';
@@ -160,6 +165,12 @@ export function cacheNeedsReview(cache: ShoppingCache, remote: unknown, remoteRe
   // Older clients may omit recipe or cooking records at the latest revision.
   // Revision equality alone therefore cannot make their pending writes safe.
   return cache.dirty && (cache.revision !== remoteRevision || (cache.legacyDirty && (remoteVersion === 2 || remoteVersion === 3)));
+}
+/** Only the explicit response for a new account represents an empty remote list. */
+export function readRemoteSnapshot(input: unknown, revision: unknown): ShoppingState | null {
+  if (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) return null;
+  if (input === null) return revision === 0 ? emptyState() : null;
+  return validateState(input);
 }
 export function validateState(input: unknown): ShoppingState | null {
   if (!input || typeof input !== 'object') return null;

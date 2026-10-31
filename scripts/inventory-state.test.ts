@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 const { newItem, emptyState, validateState, validateFoodRecipe, hasShoppingData, mergeAnonymousState,
-  recordPurchasedQuantity, setItemStatus, finalizePurchaseDraft, validateShoppingCache, cacheNeedsReview } =
+  recordPurchasedQuantity, setItemStatus, finalizePurchaseDraft, validateShoppingCache, cacheNeedsReview, readRemoteSnapshot, parseQuickText } =
   await import(new URL('../lib/client-model.ts', import.meta.url).href) as typeof import('../lib/client-model');
 
 const recipe = () => ({ title: 'チキングラタン', url: 'https://www.youtube.com/watch?v=0VJNIVUSInk', servings: 2,
@@ -125,4 +125,56 @@ test('dirty v2 caches cannot discard v3 cooking history at an equal revision', (
   const reloaded = validateShoppingCache(JSON.parse(JSON.stringify(cache)))!;
   assert.equal(cacheNeedsReview(reloaded, emptyState(), 4), true);
   assert.equal(cacheNeedsReview({ ...reloaded, dirty: false }, emptyState(), 4), false);
+});
+
+test('only an explicit new-account snapshot can represent an absent remote list', () => {
+  assert.deepEqual(readRemoteSnapshot(null, 0), emptyState());
+  for (const [input, revision] of [[undefined, 0], [null, 1], [null, undefined], [null, '0'], [null, -1], [null, 1.5]]) {
+    assert.equal(readRemoteSnapshot(input, revision), null);
+  }
+  const legacy = { ...emptyState(), version: 2, items: [newItem('保存済みの商品')] };
+  assert.deepEqual(readRemoteSnapshot(legacy, 7), validateState(legacy));
+  const savedEmpty = emptyState();
+  assert.deepEqual(readRemoteSnapshot(savedEmpty, 7), savedEmpty);
+});
+
+test('unreadable cloud snapshots remain failures instead of becoming an empty list', () => {
+  const item = newItem('消してはいけない商品', { id: 'keep-me' });
+  const valid = { ...emptyState(), items: [item], mealRecipe: recipe() };
+  const inputs = [
+    { ...valid, version: 4 },
+    { ...valid, items: [item, { ...item }] },
+    { ...valid, cookingHistory: [{ id: 'malformed' }] },
+  ];
+  for (const input of inputs) {
+    const original = JSON.stringify(input);
+    assert.equal(readRemoteSnapshot(input, 91), null);
+    assert.equal(JSON.stringify(input), original);
+  }
+  assert.equal(valid.items[0].id, 'keep-me');
+  assert.equal(valid.mealRecipe.ingredients.length, 2);
+});
+
+test('a long item name remains readable after save and retains its full text with existing comments', () => {
+  const originalName = '長いメモ'.repeat(126);
+  const item = newItem('置き換え前', { name: originalName, comment: '既存の購入メモ', favorite: true });
+  assert.equal(item.name.length, 500);
+  assert.ok(item.comment.includes(originalName));
+  assert.ok(item.comment.includes('既存の購入メモ'));
+  assert.equal(item.favorite, true);
+  const restored = validateState(JSON.parse(JSON.stringify({ ...emptyState(), items: [item] })));
+  assert.ok(restored);
+  assert.deepEqual(restored.items[0], item);
+});
+
+test('quick notes up to the input limit cannot poison the entire saved list', () => {
+  for (const length of [501, 4000]) {
+    const originalName = '長'.repeat(length);
+    const items = parseQuickText(originalName);
+    assert.equal(items.length, 1);
+    assert.equal(items[0].name.length, 500);
+    assert.ok(items[0].comment.includes(originalName));
+    const state = { ...emptyState(), items: [newItem('先に入力した商品'), ...items] };
+    assert.deepEqual(validateState(JSON.parse(JSON.stringify(state))), state);
+  }
 });

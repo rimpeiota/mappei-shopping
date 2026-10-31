@@ -17,8 +17,27 @@ await check('D1 and R2 bindings are available',async()=>{const r=await (await ca
 await check('New owner has an empty snapshot',async()=>{const r=await (await call(A,'/api/state')).json();assert.equal(r.state,null);assert.equal(r.revision,0);assert.equal(r.owner,A);});
 await check('First snapshot is saved',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:0,state:{version:3,items:[],mealRecipe:recipe,marker:'a'}});assert.equal(r.status,200);assert.equal((await r.json()).revision,1);});
 await check('Saved snapshot and unknown recipe quantities are durable',async()=>{const r=await (await call(A,'/api/state')).json();assert.equal(r.state.marker,'a');assert.equal(r.state.version,3);assert.deepEqual(r.state.mealRecipe,recipe);assert.equal(r.revision,1);});
+await check('Unreadable long item names cannot replace the saved snapshot', async()=>{
+  const state={...emptyState(),items:[{...newItem('qa'),name:'x'.repeat(501)}]};
+  assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state})).status,400);
+  const saved=await (await call(A,'/api/state')).json(); assert.equal(saved.revision,1); assert.equal(saved.state.marker,'a');
+});
+await check('Duplicate item IDs cannot make the complete snapshot unreadable', async()=>{
+  const item=newItem('qa',{id:'duplicate'}); const state={...emptyState(),items:[item,{...item}]};
+  assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state})).status,400);
+});
+await check('Malformed cooking history is rejected before D1 replacement', async()=>{
+  const state={...emptyState(),cookingHistory:[{id:'broken'}]};
+  assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state})).status,400);
+  assert.equal((await (await call(A,'/api/state')).json()).revision,1);
+});
+await check('Malformed recipe cannot silently erase the saved materials', async()=>{
+  const state={...emptyState(),mealRecipe:{title:'broken'}};
+  assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state})).status,400);
+  assert.deepEqual((await (await call(A,'/api/state')).json()).state.mealRecipe,recipe);
+});
 await check('A different owner cannot read the snapshot',async()=>assert.equal((await (await call(B,'/api/state')).json()).state,null));
-await check('Stale revision cannot overwrite current data',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:0,state:{version:3,marker:'stale'}});assert.equal(r.status,409);assert.equal((await r.json()).state.marker,'a');});
+await check('Stale revision cannot overwrite current data',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:0,state:{version:3,items:[],marker:'stale'}});assert.equal(r.status,409);assert.equal((await r.json()).state.marker,'a');});
 await check('A legacy client cannot erase recipe fields even with the current revision',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:1,state:{version:1,items:[],marker:'legacy'}});assert.equal(r.status,426);assert.match((await r.json()).error,/更新/u);const saved=await (await call(A,'/api/state')).json();assert.equal(saved.revision,1);assert.deepEqual(saved.state.mealRecipe,recipe);assert.equal(saved.state.marker,'a');});
 await check('A missing or unsupported client version is rejected',async()=>{for(const version of [undefined,1,2,4,'3']) assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state:{version,items:[]}})).status,426);});
 await check('Matching revision updates atomically',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:1,state:{version:3,items:[],mealRecipe:recipe,marker:'new'}});assert.equal(r.status,200);assert.equal((await r.json()).revision,2);});
