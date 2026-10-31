@@ -1,4 +1,4 @@
-const CACHE = 'shopping-shell-v2';
+const CACHE = 'shopping-shell-v3';
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', event => event.waitUntil((async () => {
   for (const key of await caches.keys()) if (key.startsWith('shopping-shell-') && key !== CACHE) await caches.delete(key);
@@ -14,6 +14,8 @@ self.addEventListener('fetch', event => {
         if (res.ok && new URL(res.url).pathname === '/') (await caches.open(CACHE)).put('/', res.clone());
         return res;
       } catch {
+        // Recovery must never fall back to Home, which starts automatic sync.
+        if (url.pathname !== '/') return new Response('オフラインです。接続後にもう一度開いてください。', {status:503,headers:{'Content-Type':'text/plain; charset=utf-8'}});
         return (await caches.match('/')) || new Response('オフラインです。接続後にもう一度開いてください。', {status:503,headers:{'Content-Type':'text/plain; charset=utf-8'}});
       }
     })());
