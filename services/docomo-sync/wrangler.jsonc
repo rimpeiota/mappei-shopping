@@ -3,8 +3,21 @@
   "name": "mappei-docomo-sync-prototype",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-31",
-  "observability": { "enabled": false },
-  "triggers": { "crons": [] },
-  "vars": { "INTEGRATION_ID": "", "MAILBOX": "INBOX" },
-  "d1_databases": []
+  "observability": {
+    "enabled": false
+  },
+  "triggers": {
+    "crons": []
+  },
+  "vars": {
+    "INTEGRATION_ID": "57c683bd0f494451a39679bf349ee386",
+    "MAILBOX": "INBOX"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mappei-docomo-events",
+      "database_id": "b53d1c24-0f82-434a-b2ea-c7567c48fcc1"
+    }
+  ]
 }
