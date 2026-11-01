@@ -25,8 +25,11 @@ export async function collect(env: Env, open: () => ReadOnlyImap, now = Date.now
   if (!prior) throw new CollectorError('database_schema_missing');
   if (prior.auth_blocked) return 'authentication_blocked';
   const leaseUntil = now + 240000;
-  const lease = await db.prepare('UPDATE collector_state SET lease_until = ? WHERE id = 1 AND lease_until <= ?').bind(leaseUntil, now).run();
-  if (!lease.meta.changes) return 'already_running';
+  const lease = await db.prepare('UPDATE collector_state SET lease_until = ? WHERE id = 1 AND lease_until <= ? AND auth_blocked = 0').bind(leaseUntil, now).run();
+  if (!lease.meta.changes) {
+    const current = await db.prepare('SELECT auth_blocked FROM collector_state WHERE id = 1').first<{ auth_blocked: number }>();
+    return current?.auth_blocked ? 'authentication_blocked' : 'already_running';
+  }
   let imap: ReadOnlyImap | undefined;
   try {
     imap = open();
@@ -82,6 +85,34 @@ async function authorized(request: Request, token: string): Promise<boolean> {
   return different === 0;
 }
 
+/** Some transports expose an already-ended stream even when the POST has no body. */
+async function hasEmptyBody(request: Request): Promise<boolean> {
+  const body = request.body;
+  const length = request.headers.get('content-length');
+  if (length !== null && length.trim() !== '0') {
+    void body?.cancel().catch(() => {});
+    return false;
+  }
+  if (body === null) return true;
+  const reader = body.getReader();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let empty = false;
+  try {
+    const result = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('body_timeout')), 1000); }),
+    ]);
+    const bytes = result.value;
+    empty = result.done === true && (!bytes || bytes.byteLength === 0);
+    return empty;
+  } catch { return false; }
+  finally {
+    if (timer !== undefined) clearTimeout(timer);
+    if (!empty) void reader.cancel().catch(() => {});
+    try { reader.releaseLock(); } catch { /* The rejected pending read must not delay rejection. */ }
+  }
+}
+
 /** Event-read only: no caller can trigger polling, issue IMAP commands, supply an owner, or mutate mail. */
 export async function handleRequest(request: Request, env: Env, open?: () => ReadOnlyImap): Promise<Response> {
   const url = new URL(request.url);
@@ -90,7 +121,7 @@ export async function handleRequest(request: Request, env: Env, open?: () => Rea
     if (request.method !== 'POST') return response({ error: 'method_not_allowed' }, 405);
     if (!env.COLLECT_TOKEN || env.COLLECT_TOKEN.length < 32 || env.COLLECT_TOKEN === env.EVENT_READ_TOKEN
       || !await authorized(request, env.COLLECT_TOKEN)) return response({ error: 'unauthorized' }, 401);
-    if (url.search || request.body !== null) return response({ error: 'invalid_query' }, 400);
+    if (url.search || !await hasEmptyBody(request)) return response({ error: 'invalid_query' }, 400);
     if (!configured(env) || !open) return response({ error: 'not_configured' }, 503);
     try {
       const result = await collect(env, open);

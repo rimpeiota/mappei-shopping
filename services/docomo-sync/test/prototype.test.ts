@@ -204,6 +204,56 @@ test('the separate admin endpoint can verify one read-only collection before any
   sqlite.close();
 });
 
+test('empty POST streams are accepted without accepting caller input or starting more than one collection', async () => {
+  const { DB, sqlite } = memoryDatabase();
+  const env = { DB, INTEGRATION_ID: source.integrationId, DOCOMO_ACCOUNT_ID: 'synthetic-account', DOCOMO_IMAP_PASSWORD: 'synthetic-password',
+    EVENT_READ_TOKEN: 'synthetic-event-token-at-least-32-characters', COLLECT_TOKEN: 'synthetic-admin-token-at-least-32-characters' };
+  let connections = 0;
+  const open = () => {
+    connections += 1;
+    return new ReadOnlyImap(fakeSocket((command, tag) => {
+      if (command.startsWith('LOGIN ')) return `${tag} OK login\r\n`;
+      if (command.startsWith('EXAMINE ')) return `* OK [UIDVALIDITY 42] valid\r\n${tag} OK examined\r\n`;
+      return `* SEARCH\r\n${tag} OK searched\r\n`;
+    }));
+  };
+  for (const body of [new Uint8Array(0), new ReadableStream<Uint8Array>({ start(controller) { controller.close(); } })]) {
+    const request = new Request('https://worker.example/v1/collect', { method: 'POST', headers: {
+      authorization: `Bearer ${env.COLLECT_TOKEN}`, 'content-length': '0',
+    }, body, duplex: 'half' } as RequestInit);
+    assert.notEqual(request.body, null);
+    const result = await handleRequest(request, env, open);
+    assert.equal(result.status, 200); assert.deepEqual(await result.json(), { result: 'success' });
+  }
+  assert.equal(connections, 2);
+  sqlite.close();
+});
+
+test('nonempty, errored, nonterminal, and stalled POST bodies are rejected before mailbox access', async () => {
+  const { DB, sqlite } = memoryDatabase();
+  const env = { DB, INTEGRATION_ID: source.integrationId, DOCOMO_ACCOUNT_ID: 'synthetic-account', DOCOMO_IMAP_PASSWORD: 'synthetic-password',
+    EVENT_READ_TOKEN: 'synthetic-event-token-at-least-32-characters', COLLECT_TOKEN: 'synthetic-admin-token-at-least-32-characters' };
+  let connections = 0, cancelled = 0;
+  const bodies: { body?: BodyInit; length?: string }[] = [
+    { body: 'private-body-marker' },
+    { length: '1' },
+    { length: 'invalid' },
+    { body: new ReadableStream<Uint8Array>({ start(controller) { controller.error(new Error('private-stream-error')); } }) },
+    { body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(0)); }, cancel() { cancelled += 1; } }) },
+    { body: new ReadableStream<Uint8Array>({ cancel() { cancelled += 1; } }) },
+  ];
+  for (const { body, length } of bodies) {
+    const request = new Request('https://worker.example/v1/collect', { method: 'POST', headers: {
+      authorization: `Bearer ${env.COLLECT_TOKEN}`, ...(length === undefined ? {} : { 'content-length': length }),
+    }, ...(body === undefined ? {} : { body, duplex: 'half' }) } as RequestInit);
+    const result = await handleRequest(request, env, () => { connections += 1; throw new Error('must not connect'); });
+    assert.equal(result.status, 400); assert.deepEqual(await result.json(), { error: 'invalid_query' });
+  }
+  assert.equal(connections, 0); assert.equal(cancelled, 2);
+  assert.equal(sqlite.prepare('SELECT last_success_at FROM collector_state').get()!.last_success_at, null);
+  sqlite.close();
+});
+
 test('one authentication failure blocks further unattended login attempts and retains only an error code', async () => {
   const { DB, sqlite } = memoryDatabase();
   const env = { DB, INTEGRATION_ID: source.integrationId, DOCOMO_ACCOUNT_ID: 'synthetic-account', DOCOMO_IMAP_PASSWORD: 'synthetic-password', EVENT_READ_TOKEN: 'synthetic-event-token-at-least-32-characters' };
@@ -214,5 +264,32 @@ test('one authentication failure blocks further unattended login attempts and re
   const state = sqlite.prepare('SELECT last_error_code, auth_blocked, lease_until FROM collector_state').get()!;
   assert.equal(state.last_error_code, 'imap_authentication_failed'); assert.equal(state.auth_blocked, 1); assert.equal(state.lease_until, 0);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM commerce_events').get()!.n, 0);
+  sqlite.close();
+});
+
+test('a collection with a stale pre-lease read cannot log in after another collection blocks authentication', async () => {
+  const { DB, sqlite } = memoryDatabase();
+  let releaseSecond!: () => void;
+  const secondLease = new Promise<void>(resolve => { releaseSecond = resolve; });
+  let leases = 0, attempts = 0;
+  const delayedDB = { prepare(sql: string) {
+    const statement = DB.prepare(sql);
+    const wrapped = {
+      bind(...values: unknown[]) { statement.bind(...values); return wrapped; },
+      first: statement.first.bind(statement), all: statement.all.bind(statement),
+      async run() {
+        if (sql.startsWith('UPDATE collector_state SET lease_until = ? WHERE') && ++leases === 2) await secondLease;
+        return statement.run();
+      },
+    };
+    return wrapped;
+  } } as unknown as D1Database;
+  const env = { DB: delayedDB, INTEGRATION_ID: source.integrationId, DOCOMO_ACCOUNT_ID: 'synthetic-account', DOCOMO_IMAP_PASSWORD: 'synthetic-password', EVENT_READ_TOKEN: 'synthetic-event-token-at-least-32-characters' };
+  const open = () => { attempts += 1; return new ReadOnlyImap(fakeSocket((_command, tag) => `${tag} NO private-provider-reply\r\n`)); };
+  const first = collect(env, open), second = collect(env, open);
+  assert.equal(await first, 'imap_authentication_failed');
+  releaseSecond();
+  assert.equal(await second, 'authentication_blocked'); assert.equal(attempts, 1);
+  assert.equal(sqlite.prepare('SELECT auth_blocked FROM collector_state').get()!.auth_blocked, 1);
   sqlite.close();
 });

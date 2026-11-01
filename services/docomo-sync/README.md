@@ -28,6 +28,7 @@ Sitesサーバー側で、認証済みの`requireOwner()`と固定のintegration
 - IMAP認証失敗は1回で停止し、以後のCronは接続しません。認証情報を直してから管理者が停止状態を解除します。
 - `GET /v1/events?cursor=0&limit=50`がイベント読取API。Bearerキー必須、最大100件、任意ownerや取得先URLは指定できません。取得は非破壊で、カーソルとイベントIDを利用側が保持します。
 - 初回検証用の`POST /v1/collect`は、読取キーとは別の`COLLECT_TOKEN`が必要です。入力本文・クエリ・任意コマンドは受け付けません。Cronを有効にする前の1回の取得確認に使用します。未設定ではメールへ接続しません。
+- 本文のないPOSTが空のストリームとして届く場合も受け付けます。本文がある要求・終端しないストリームは、上限1秒でメール接続前に拒否します。認証停止の確認と接続用ロックの取得は同じ更新条件にし、並行実行でも認証失敗後の再接続を防ぎます。
 
 イベント型はアプリの`lib/commerce-model.ts`の`NormalizedCommerceEvent`と同じ構造です。商品・注文行・配送・数量の対応を安全に確定できないため、関連する項目は`null`です。取得した`kind: delivered`も文面上の候補に過ぎず、`explicitConfirmed: false`を外してはいけません。
 
@@ -46,7 +47,7 @@ npm run dry-run
 
 依存はMIME解析の[`postal-mime`](https://github.com/postalsys/postal-mime)、ビルド用Wrangler・TypeScript・Cloudflare型定義です。
 
-## 接続に必要な設定（未実行）
+## 接続手順
 
 1. 本人のCloudflareアカウントで独立WorkerとD1を用意します。`wrangler d1 create docomo-sync-events`で返された実IDを`wrangler.jsonc`の`d1_databases`へ、binding名`DB`として設定し、`schema.sql`を適用します。実IDを推測で埋めないでください。
 2. `INTEGRATION_ID`に、メールアドレスを含まないランダムな識別子を設定します。Sites側にも同じ識別子を保持します。
