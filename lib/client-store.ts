@@ -1,6 +1,7 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cacheNeedsReview, emptyState, hasShoppingData, mergeAnonymousState, readRemoteSnapshot, validateShoppingCache, type ShoppingCache, type ShoppingState } from './client-model';
+import { createRemoteRefreshController, inspectSharedRefreshCache, type RefreshBoundary } from './client-refresh';
 const PREFIX = 'mappei-shopping-v1';
 const ANONYMOUS_KEY = `${PREFIX}:anonymous`;
 const LAST_OWNER_KEY = `${PREFIX}:last-owner`;
@@ -16,7 +17,12 @@ function readCache(key: string): Cache | null {
   return cache;
 }
 function hasData(cache: Cache) { return hasShoppingData(cache.state) || cache.dirty; }
-export function useShoppingStore() {
+function hasOpenEditor(): boolean {
+  const focused = document.activeElement;
+  return !!document.querySelector('[aria-modal="true"], [role="dialog"], [data-sync-hold]')
+    || (focused instanceof HTMLElement && (['INPUT', 'TEXTAREA', 'SELECT'].includes(focused.tagName) || focused.isContentEditable));
+}
+export function useShoppingStore({ holdRemoteUpdates = false }: { holdRemoteUpdates?: boolean } = {}) {
   const [state, setState] = useState<ShoppingState>(emptyState);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState<SyncStatus>('loading');
@@ -40,6 +46,9 @@ export function useShoppingStore() {
   const connectionSequence = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const storageReadBlocked = useRef(false);
+  const remoteUpdatesHeld = useRef(holdRemoteUpdates);
+  useLayoutEffect(() => { remoteUpdatesHeld.current = holdRemoteUpdates; }, [holdRemoteUpdates]);
+  const refresher = useRef<ReturnType<typeof createRemoteRefreshController> | null>(null);
   const persist = useCallback(() => {
     // Do not replace unreadable originals with edits based on an empty screen.
     if (storageReadBlocked.current) { setStorageError(true); return; }
@@ -121,6 +130,35 @@ export function useShoppingStore() {
       if (dirty.current) void sync(); else setStatus('synced');
     } catch { if (sequence === connectionSequence.current) setStatus(navigator.onLine ? 'error' : 'offline'); }
   }, [persist, sync]);
+  const refresh = useCallback(() => {
+    refresher.current ||= createRemoteRefreshController({
+      boundary: (): RefreshBoundary => ({ ...inspectSharedRefreshCache(() => localStorage, key.current), owner: owner.current, key: key.current, localVersion: version.current,
+        revision: revision.current, connectionSequence: connectionSequence.current, enabled: enabled.current,
+        dirty: dirty.current, saving: saving.current, paused: paused.current,
+        held: remoteUpdatesHeld.current || hasOpenEditor(), storageReadBlocked: storageReadBlocked.current,
+        upgradeRequired: upgradeRequired.current, online: navigator.onLine, visible: document.visibilityState === 'visible' }),
+      request: signal => fetch('/api/state', { signal }),
+      apply: snapshot => {
+        revision.current = snapshot.revision;
+        stateRef.current = snapshot.state;
+        setState(snapshot.state);
+        legacyDirty.current = false;
+        persist();
+        setStatus('synced');
+      },
+      unchanged: () => setStatus('synced'),
+      unavailable: reason => {
+        if (reason === 'signed-out' || reason === 'account-changed') {
+          enabled.current = false; owner.current = ''; setAuthenticated(false);
+          setPreviousAccountLocal(key.current !== ANONYMOUS_KEY); setStatus('local');
+          return;
+        }
+        if (reason === 'invalid') { enabled.current = false; paused.current = true; }
+        setStatus(navigator.onLine ? 'error' : 'offline');
+      },
+    });
+    return refresher.current.refresh();
+  }, [persist]);
   const commit = useCallback((next: ShoppingState | ((old: ShoppingState) => ShoppingState)) => {
     stateRef.current = typeof next === 'function' ? next(stateRef.current) : next;
     dirty.current = true; version.current += 1; setState(stateRef.current); persist();
@@ -146,11 +184,25 @@ export function useShoppingStore() {
     });
     const visible = setTimeout(() => { if (active) setReady(true); }, 320);
     fetch('/api/health').then(async response => response.ok ? await response.json() as Record<string, unknown> : {}).then(data => { if (active) setCapability(data); }).catch(() => {});
-    const online = () => { void connect(); };
+    const online = () => { if (enabled.current && owner.current && !dirty.current) void refresh(); else void connect(); };
     const offline = () => { if (!upgradeRequired.current) setStatus('offline'); };
     window.addEventListener('online', online); window.addEventListener('offline', offline);
     return () => { active = false; connectionSequence.current += 1; clearTimeout(visible); if (timer.current) clearTimeout(timer.current); window.removeEventListener('online', online); window.removeEventListener('offline', offline); };
-  }, [connect]);
+  }, [connect, refresh]);
+  useEffect(() => {
+    const resume = () => { void refresh(); };
+    const visible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    const interval = setInterval(resume, 10000);
+    window.addEventListener('focus', resume);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', resume);
+      document.removeEventListener('visibilitychange', visible);
+      refresher.current?.cancel();
+    };
+  }, [refresh]);
+  useEffect(() => { if (!holdRemoteUpdates) void refresh(); }, [holdRemoteUpdates, refresh]);
   useEffect(() => { if (status === 'local' && enabled.current && dirty.current) { const retry = setTimeout(() => void sync(), 700); return () => clearTimeout(retry); } }, [status, sync, state]);
   const resolveConflict = (choice: 'local' | 'remote' | 'stay') => {
     if (!conflict) return;
@@ -169,6 +221,6 @@ export function useShoppingStore() {
     setConflict(null); paused.current = false; enabled.current = true; persist();
     if (dirty.current) void sync(); else setStatus('synced');
   };
-  const retry = () => { if (upgradeRequired.current) { setStatus('upgrade'); return; } if (paused.current) { if (conflict) return; paused.current = false; } if (!enabled.current) void connect(); else void sync(); };
+  const retry = () => { if (upgradeRequired.current) { setStatus('upgrade'); return; } if (paused.current) { if (conflict) return; paused.current = false; } if (!enabled.current) void connect(); else if (dirty.current) void sync(); else void refresh(); };
   return { state, commit, ready, status, authenticated, storageError, storageScope, previousAccountLocal, conflict, resolveConflict, capability, retry };
 }

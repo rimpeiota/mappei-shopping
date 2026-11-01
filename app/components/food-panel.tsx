@@ -87,7 +87,7 @@ function RecipeEditor({ recipe, onSave, onClose }: { recipe: FoodRecipe | null; 
     onSave(next);
     onClose();
   };
-  return <form className="food-form food-recipe-form" onSubmit={submit}>
+  return <form className="food-form food-recipe-form" data-sync-hold onSubmit={submit}>
     <div className="food-section-heading"><h3>料理と材料</h3><button type="button" className="icon-button" aria-label="材料の編集を閉じる" onClick={onClose}><X size={20} /></button></div>
     <label className="food-field"><span>料理名</span><input value={title} onChange={event => setTitle(event.target.value)} maxLength={200} placeholder="料理名" /></label>
     <label className="food-field"><span>出典のURL</span><input type="url" value={url} onChange={event => setUrl(event.target.value)} maxLength={2000} placeholder="https://" /></label>
@@ -202,7 +202,7 @@ export function FoodPanel({ items, recipe, cookingHistory, onItems, onRecipe, on
       <div className="food-entry-actions"><button type="button" className="button primary" onClick={() => openEntry('current')}><Plus size={18} />今ある量を登録</button><button type="button" className="button secondary" onClick={() => openEntry('purchase')}><Plus size={18} />買ったものを追加</button></div>
       <p className="food-note">「今ある量」は、今日買った分も含む現在の合計です。買い物リストで購入済みにした分は、自動で在庫に含まれます。</p>
 
-      {entryOpen && <div ref={entryRef} className="food-entry-anchor"><form className="food-form" onSubmit={submitEntry}>
+      {entryOpen && <div ref={entryRef} className="food-entry-anchor"><form className="food-form" data-sync-hold onSubmit={submitEntry}>
         <div className="food-section-heading"><h3>{entryMode === 'current' ? '現在の合計を登録・更新' : '今日買ったものを追加'}</h3><button type="button" className="icon-button" aria-label="食材の入力を閉じる" onClick={() => setEntryOpen(false)}><X size={20} /></button></div>
         <label className="food-field"><span>食材名</span><input ref={nameRef} value={name} onChange={event => { setName(event.target.value); setEntryError(''); }} maxLength={500} placeholder="玉ねぎ" required /></label>
         <div className="food-two-fields"><label className="food-field"><span>{entryMode === 'current' ? '現在の合計量' : '買った量'}</span><input inputMode="decimal" value={quantity} onChange={event => setQuantity(event.target.value)} maxLength={30} placeholder="不明なら空欄" /></label><StoragePicker key={`unit-${entryKey}`} className="food-field" label="単位" kind="unit" value={unit} onChange={setUnit} /></div>

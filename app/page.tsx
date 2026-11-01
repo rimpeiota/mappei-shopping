@@ -45,7 +45,7 @@ function ItemCard({ item, onEdit, onStatus, onName, onNameEditing, onAddAgain, o
       {onMoveToList && <button className="text-button plan-move" onClick={onMoveToList} aria-label={`${title}を買い物リストへ移す`}>買い物リストへ移す<ChevronRight size={16} /></button>}
       {missingName && <>
         <p className="item-name-warning" role={pending ? 'status' : undefined}>{pending ? '商品名を取得中…' : '商品名を入力してください'}</p>
-        <form className="link-name-form" onSubmit={e => { e.preventDefault(); if (name.trim()) onName(name.trim()); }}>
+        <form className="link-name-form" data-sync-hold={name.trim() ? '' : undefined} onSubmit={e => { e.preventDefault(); if (name.trim()) onName(name.trim()); }}>
           <input aria-label="リンク商品の商品名" value={name} maxLength={500} placeholder="何を買う？" onChange={e => { onNameEditing?.(); setName(e.target.value); }} />
           <button className="button secondary" type="submit" disabled={!name.trim()}>保存</button>
         </form>
@@ -63,7 +63,11 @@ function Empty({ mode, filtered, onAdd, onImport }: { mode: Mode; filtered: bool
   </div>;
 }
 export default function Home() {
-  const { state, commit, ready, status, authenticated, storageError, storageScope, previousAccountLocal, conflict, resolveConflict, capability, retry } = useShoppingStore();
+  const [editing, setEditing] = useState<ShoppingItem | null>(null);
+  const [modal, setModal] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ text: string; undo?: ShoppingState; key: number } | null>(null);
+  const [aiPending, setAiPending] = useState(0);
+  const { state, commit, ready, status, authenticated, storageError, storageScope, previousAccountLocal, conflict, resolveConflict, capability, retry } = useShoppingStore({ holdRemoteUpdates: !!editing || !!modal || !!toast?.undo || aiPending > 0 });
   const [mode, setMode] = useState<Mode>('list');
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -74,16 +78,12 @@ export default function Home() {
   const [sort, setSort] = useState('manual');
   const [showFilters, setShowFilters] = useState(false);
   const [quick, setQuick] = useState('');
-  const [aiPending, setAiPending] = useState(0);
   const [linkPending, setLinkPending] = useState<string[]>([]);
   const linkAttempts = useRef(new Set<string>());
   const linkManualEdits = useRef(new Set<string>());
   const linkInFlight = useRef(0);
   const [aiCheck, setAiCheck] = useState('');
   const [aiChecking, setAiChecking] = useState(false);
-  const [editing, setEditing] = useState<ShoppingItem | null>(null);
-  const [modal, setModal] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ text: string; undo?: ShoppingState; key: number } | null>(null);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [importText, setImportText] = useState('');
   const [pendingImport, setPendingImport] = useState<ShoppingState | null>(null);
@@ -331,7 +331,7 @@ export default function Home() {
             </div>
             {mode === 'list' && checkedItems.length > 0 && <section className="checklist-completed"><button className="text-button" aria-expanded={showCompleted} onClick={() => setShowCompleted(value => !value)}><ChevronDown size={18} />購入済み {checkedItems.length}件</button>{showCompleted && <div className="items-list" aria-label="購入済みの商品">{checkedItems.map(item => <ItemCard key={item.id} item={item} checkable history onEdit={() => setEditing(item)} onStatus={() => toggleItem(item)} onName={name => updateItem(item.id, { name }, '商品名を保存しました')} />)}</div>}</section>}
           </>}
-      {mode === 'settings' && <div className="settings-panel"><div className="settings-section glass"><div className="section-heading"><h3><Cloud size={17} />保存と同期</h3><span className={`connection-badge ${authenticated ? 'connected' : ''}`}>{authenticated ? '接続済み' : '未ログイン'}</span></div><div className="setting-line"><div><b>この端末</b><small>{storageError ? '保存エラー' : '変更を自動保存'}</small></div><Check size={17} className={storageError ? 'text-coral' : 'text-green'} /></div><div className="setting-line"><div><b>Cloudflare D1</b><small>{syncLabels[status]}</small></div>{authenticated ? <button className="button secondary small" onClick={() => void retry()}><RefreshCw size={14} />同期</button> : <a className="button secondary small" href="/signin-with-chatgpt?return_to=/">ログイン<ArrowUpRight size={14} /></a>}</div>{!authenticated && <p className="field-note">未ログインのメモはこの端末に保存されます。クラウド同期・AI補完・添付の保存にはログインが必要です。</p>}</div>
+      {mode === 'settings' && <div className="settings-panel"><div className="settings-section glass"><div className="section-heading"><h3><Cloud size={17} />保存と同期</h3><span className={`connection-badge ${authenticated ? 'connected' : ''}`}>{authenticated ? '接続済み' : '未ログイン'}</span></div><div className="setting-line"><div><b>この端末</b><small>{storageError ? '保存エラー' : '変更を自動保存'}</small></div><Check size={17} className={storageError ? 'text-coral' : 'text-green'} /></div><div className="setting-line"><div><b>Cloudflare D1</b><small>{syncLabels[status]}</small></div>{authenticated ? <button className="button secondary small" onClick={() => void retry()}><RefreshCw size={14} />同期</button> : <a className="button secondary small" href="/signin-with-chatgpt?return_to=/">ログイン<ArrowUpRight size={14} /></a>}</div>{authenticated ? <p className="field-note">同じアカウントの端末と自動同期します。画面を開いている間に変更を反映し、編集中は保留します。</p> : <p className="field-note">未ログインのメモはこの端末に保存されます。クラウド同期・AI補完・添付の保存にはログインが必要です。</p>}</div>
       <div className="settings-section glass">
         <div className="section-heading"><h3><Sparkles size={17} />AI補完</h3><span className="connection-badge">{capability.ai === 'configured' ? '設定済み' : '未設定'}</span></div>
         <div className="setting-line"><span>Workers AI</span><button className="button secondary small" disabled={!authenticated || aiChecking} onClick={() => void checkAi()}>{aiChecking ? <LoaderCircle size={14} className="spin" /> : <RefreshCw size={14} />}AI接続を確認</button></div>
