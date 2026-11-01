@@ -22,6 +22,31 @@ test('current amount replaces all matching stock and spares while preserving pur
   assert.equal(next[3].stock, 1.5); assert.equal(next[3].stockKnown, true); assert.equal(next[3].inventoryOnly, true); assert.equal(next[3].checkedAt, date);
 });
 
+test('counting current food leaves an unbought future product candidate untouched and out of inventory', () => {
+  const current = newItem('牛乳', { stock: 500, inventoryOnly: true, unit: 'ml', checkedAt: '2026-10-27' });
+  const future = newItem('牛乳', { purchaseLater: true, stockKnown: false, quantity: 1, unit: '本', url: 'https://www.amazon.co.jp/dp/B000000001', favorite: true });
+  const before = structuredClone(future);
+  const next = setCurrentFood([current, future], { name: '牛乳', quantity: 200, unit: 'ml', note: '' }, '冷蔵庫', date);
+  assert.equal(next[1], future); assert.deepEqual(next[1], before); assert.equal(next[1].checkedAt, ''); assert.equal(next[1].stockKnown, false);
+  assert.equal(next.filter(item => item.stock > 0 || item.spare > 0 || item.checkedAt).length, 2);
+  const [row] = compareFood(milk(), next);
+  assert.equal(row.have, 200); assert.equal(row.planned, 0); assert.equal(row.toBuy, 200);
+});
+
+test('existing stock and purchase history are reconciled even when a record is in future plans', () => {
+  const bought = newItem('牛乳', { purchaseLater: true, unit: 'ml', quantity: 1000, status: 'purchased',
+    purchasedQuantity: 1000, purchasedAt: '2026-10-27', stock: 300, spare: 100, comment: '保存する購入メモ',
+    attachments: [{ id: 'receipt', name: 'receipt.jpg', url: '/api/attachments/receipt', type: 'image/jpeg' }] });
+  const checkedZero = newItem('牛乳', { purchaseLater: true, unit: 'ml', stock: 0, checkedAt: '2026-10-27' });
+  const legacyPurchase = newItem('牛乳', { purchaseLater: true, status: 'purchased', quantity: 500, unit: 'ml', stock: 0 });
+  const next = setCurrentFood([bought, checkedZero, legacyPurchase], { name: '牛乳', quantity: 200, unit: 'ml', note: '' }, '冷蔵庫', date);
+  assert.equal(next[0].stock, 0); assert.equal(next[0].spare, 0); assert.equal(next[0].stockReconciledQuantity, 1000);
+  for (const field of ['purchaseLater', 'purchasedAt', 'purchasedQuantity', 'quantity', 'comment', 'attachments'] as const) assert.deepEqual(next[0][field], bought[field]);
+  assert.equal(next[1].checkedAt, date); assert.equal(next[2].stockReconciledQuantity, 500);
+  assert.equal(next[2].purchasedQuantity, 0); assert.equal(next[2].status, 'purchased');
+  assert.equal(compareFood(milk(), next)[0].have, 200);
+});
+
 test('today purchases are already included in a current total and are not added again', () => {
   const initial = addPurchasedFood([], { name: '牛乳', quantity: 500, unit: 'ml', note: '' }, '冷蔵庫', date);
   const next = setCurrentFood(initial, { name: '牛乳', quantity: 200, unit: 'ml', note: '' }, '冷蔵庫', date);

@@ -9,7 +9,16 @@ export function setCurrentFood(items: ShoppingItem[], food: FoodAmount, location
   if (!name || !validQuantity(food.quantity)) return items;
   const key = foodKey(name);
   const now = new Date().toISOString();
-  const next = items.map(item => foodKey(item.name) === key ? { ...item, stock: 0, spare: 0, stockKnown: true, checkedAt: date, stockReconciledQuantity: Math.max(item.stockReconciledQuantity, item.purchasedQuantity, item.status === 'purchased' || item.status === 'received' ? item.quantity : 0), updatedAt: now } : item);
+  const next = items.map(item => {
+    // A wish-list candidate makes no claim about current stock. Counting the fridge must not
+    // edit that product or turn it into an extra zero-stock entry in the inventory screen.
+    const futureCandidate = item.purchaseLater && item.stock === 0 && item.spare === 0 && !item.checkedAt
+      && item.purchasedQuantity === 0 && !item.purchasedAt && item.stockReconciledQuantity === 0
+      && item.status !== 'purchased' && item.status !== 'received';
+    if (foodKey(item.name) !== key || futureCandidate) return item;
+    return { ...item, stock: 0, spare: 0, stockKnown: true, checkedAt: date,
+      stockReconciledQuantity: Math.max(item.stockReconciledQuantity, item.purchasedQuantity, item.status === 'purchased' || item.status === 'received' ? item.quantity : 0), updatedAt: now };
+  });
   next.push(newItem(name, { category: '食品', unit: food.unit, quantity: food.quantity !== null && food.quantity > 0 ? food.quantity : 1,
     inventoryOnly: true, stockKnown: food.quantity !== null, stock: food.quantity ?? 0, spare: 0,
     inventorySource: 'current', status: 'planned', location, checkedAt: date, comment: food.note }));

@@ -23,9 +23,9 @@ const captions: Record<VoicePhase, string> = {
   transcribing: '音声を文字にしています…',
 };
 
-export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, scope }: {
+export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, scope, planned = false }: {
   value: string; onChange: Dispatch<SetStateAction<string>>; onSubmit: () => void;
-  inputRef: RefObject<HTMLTextAreaElement | null>; aiPending: number; scope: string;
+  inputRef: RefObject<HTMLTextAreaElement | null>; aiPending: number; scope: string; planned?: boolean;
 }) {
   const recordByDefault = useSyncExternalStore(noDeviceEvents, () => prefersRecordedSpeech(navigator.userAgent), () => false);
   const [phase, setPhase] = useState<VoicePhase>('idle');
@@ -156,7 +156,7 @@ export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, 
   const buttonLabel = phase === 'recording' ? '録音を終了して文字にする' : phase === 'starting' || phase === 'permission' ? '音声入力をキャンセル' : phase === 'transcribing' ? '文字起こし中' : active ? '音声入力を停止' : '音声入力';
   return <div className="composer-dock">
     <form className={`composer glass ${active ? 'listening' : ''}`} onSubmit={event => { event.preventDefault(); onSubmit(); }}>
-      <textarea ref={inputRef} aria-label="買うものを入力" placeholder={phase === 'listening' ? '聞き取り中…' : '買うもの・URL'} value={value} rows={1} maxLength={4000} onChange={event => onChange(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit(); } }} />
+      <textarea ref={inputRef} aria-label={planned ? '買う予定の商品を入力' : '買うものを入力'} placeholder={phase === 'listening' ? '聞き取り中…' : planned ? '商品名・URL' : '買うもの・URL'} value={value} rows={1} maxLength={4000} onChange={event => onChange(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); onSubmit(); } }} />
       <div className="composer-actions">
         {aiPending > 0 && <span aria-label="AI補完中" className="ai-working"><Sparkles size={14} /></span>}
         <button className={`icon-button voice-button ${active ? 'active' : ''}`} type="button" aria-label={buttonLabel} aria-pressed={active} disabled={phase === 'transcribing' || phase === 'stopping'} onClick={() => {
@@ -166,7 +166,7 @@ export function QuickComposer({ value, onChange, onSubmit, inputRef, aiPending, 
           else if (recordByDefault || prefersRecordedSpeech(navigator.userAgent)) void startRecording();
           else startBrowser();
         }}>{active ? <MicOff size={19} /> : <Mic size={19} />}</button>
-        <button type="submit" className="add-button" disabled={!value.trim()} aria-label="リストに追加"><Plus size={18} /><span>追加</span></button>
+        <button type="submit" className="add-button" disabled={!value.trim()} aria-label={planned ? '買う予定に追加' : 'リストに追加'}><Plus size={18} /><span>追加</span></button>
       </div>
     </form>
     <div className="composer-caption" role="status"><span>{phase === 'idle' && recordByDefault ? '録音はCloudflareで文字に変換 · 入力は端末に即時保存' : captions[phase]}</span>{aiPending > 0 && <span> · AI補完中</span>}</div>

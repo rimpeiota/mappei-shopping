@@ -7,6 +7,7 @@ const base = process.argv[2] || 'http://127.0.0.1:8787';
 assert(['localhost','127.0.0.1','[::1]'].includes(new URL(base).hostname), 'QA runs only against loopback.');
 const A = `qa-a-${randomUUID()}`, B = `qa-b-${randomUUID()}`;
 const recipe = {title:'QA材料',url:'https://example.com/recipe',servings:2,ingredients:[{name:'牛乳',quantity:400,unit:'ml',note:''},{name:'黒こしょう',quantity:null,unit:'',note:'量の記載なし'}]};
+const purchaseLaterItem = newItem('QAあとで買う商品', {id:'qa-purchase-later',purchaseLater:true,url:'https://www.amazon.co.jp/dp/B000000001'});
 const results = [];
 async function call(owner, path, method='GET', body, extra={}) {
   return fetch(base+path,{method,headers:{...(owner?{'oai-authenticated-user-id':owner}:{}),...(method!=='GET'?{origin:base}:{}),...(body && !(body instanceof FormData)?{'Content-Type':'application/json'}:{}),...extra},body:body===undefined?undefined:body instanceof FormData?body:JSON.stringify(body)});
@@ -15,8 +16,8 @@ async function check(name, fn) { await fn(); results.push({name,result:'pass'});
 await check('Unauthenticated state is rejected',async()=>assert.equal((await call(null,'/api/state')).status,401));
 await check('D1 and R2 bindings are available',async()=>{const r=await (await call(null,'/api/health')).json(); assert.equal(r.storage,'d1');assert.equal(r.attachments,true);});
 await check('New owner has an empty snapshot',async()=>{const r=await (await call(A,'/api/state')).json();assert.equal(r.state,null);assert.equal(r.revision,0);assert.equal(r.owner,A);});
-await check('First snapshot is saved',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:0,state:{version:3,items:[],mealRecipe:recipe,marker:'a'}});assert.equal(r.status,200);assert.equal((await r.json()).revision,1);});
-await check('Saved snapshot and unknown recipe quantities are durable',async()=>{const r=await (await call(A,'/api/state')).json();assert.equal(r.state.marker,'a');assert.equal(r.state.version,3);assert.deepEqual(r.state.mealRecipe,recipe);assert.equal(r.revision,1);});
+await check('First snapshot is saved',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:0,state:{...emptyState(),items:[purchaseLaterItem],mealRecipe:recipe,marker:'a'}});assert.equal(r.status,200);assert.equal((await r.json()).revision,1);});
+await check('Saved snapshot, purchase-later products and unknown recipe quantities are durable',async()=>{const r=await (await call(A,'/api/state')).json();assert.equal(r.state.marker,'a');assert.equal(r.state.version,4);assert.deepEqual(r.state.items,[purchaseLaterItem]);assert.deepEqual(r.state.mealRecipe,recipe);assert.equal(r.revision,1);});
 await check('Unreadable long item names cannot replace the saved snapshot', async()=>{
   const state={...emptyState(),items:[{...newItem('qa'),name:'x'.repeat(501)}]};
   assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state})).status,400);
@@ -37,17 +38,29 @@ await check('Malformed recipe cannot silently erase the saved materials', async(
   assert.deepEqual((await (await call(A,'/api/state')).json()).state.mealRecipe,recipe);
 });
 await check('A different owner cannot read the snapshot',async()=>assert.equal((await (await call(B,'/api/state')).json()).state,null));
-await check('Stale revision cannot overwrite current data',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:0,state:{version:3,items:[],marker:'stale'}});assert.equal(r.status,409);assert.equal((await r.json()).state.marker,'a');});
+await check('Stale revision cannot overwrite current data',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:0,state:{...emptyState(),marker:'stale'}});assert.equal(r.status,409);assert.equal((await r.json()).state.marker,'a');});
 await check('A legacy client cannot erase recipe fields even with the current revision',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:1,state:{version:1,items:[],marker:'legacy'}});assert.equal(r.status,426);assert.match((await r.json()).error,/更新/u);const saved=await (await call(A,'/api/state')).json();assert.equal(saved.revision,1);assert.deepEqual(saved.state.mealRecipe,recipe);assert.equal(saved.state.marker,'a');});
-await check('A missing or unsupported client version is rejected',async()=>{for(const version of [undefined,1,2,4,'3']) assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state:{version,items:[]}})).status,426);});
-await check('Matching revision updates atomically',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:1,state:{version:3,items:[],mealRecipe:recipe,marker:'new'}});assert.equal(r.status,200);assert.equal((await r.json()).revision,2);});
+await check('A missing or unsupported client version is rejected',async()=>{for(const version of [undefined,1,2,3,5,'4']) assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state:{version,items:[]}})).status,426);});
+await check('A non-boolean purchase-later flag cannot silently move a product into the shopping list',async()=>{
+  const before=await (await call(A,'/api/state')).json();
+  const state={...emptyState(),items:[{...purchaseLaterItem,purchaseLater:'true'}]};
+  assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:1,state})).status,400);
+  assert.deepEqual(await (await call(A,'/api/state')).json(),before);
+});
+await check('Matching revision updates atomically',async()=>{const r=await call(A,'/api/state','PUT',{owner:A,revision:1,state:{...emptyState(),items:[purchaseLaterItem],mealRecipe:recipe,marker:'new'}});assert.equal(r.status,200);assert.equal((await r.json()).revision,2);});
 const cooked = applyCooking([newItem('牛乳', { id:'qa-milk', unit:'ml', stock:1000, stockKnown:true, inventoryOnly:true, checkedAt:'2026-10-31' })], [], recipe, 2, 'qa-cooking', '2026-10-31T09:00:00.000Z');
 assert.equal(cooked.error, undefined); assert.equal(cooked.items[0].stock, 600);
 await check('Cooking stock and receipt persist together in D1', async()=>{
-  const state={...emptyState(),items:cooked.items,mealRecipe:recipe,cookingHistory:cooked.history};
+  const state={...emptyState(),items:[...cooked.items,purchaseLaterItem],mealRecipe:recipe,cookingHistory:cooked.history};
   assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:2,state})).status,200);
   const saved=await (await call(A,'/api/state')).json();
-  assert.equal(saved.state.items[0].stock,600); assert.deepEqual(saved.state.cookingHistory,cooked.history); assert.equal(saved.revision,3);
+  assert.equal(saved.state.items[0].stock,600); assert.deepEqual(saved.state.cookingHistory,cooked.history); assert.equal(saved.state.items[1].purchaseLater,true); assert.equal(saved.revision,3);
+});
+await check('Old v3 clients cannot erase purchase-later membership at the current revision', async()=>{
+  const before=await (await call(A,'/api/state')).json();
+  const oldItems=before.state.items.map(item=>{const oldItem={...item};delete oldItem.purchaseLater;return oldItem;});
+  assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:3,state:{...before.state,version:3,items:oldItems}})).status,426);
+  assert.deepEqual(await (await call(A,'/api/state')).json(),before);
 });
 await check('Old v2 clients cannot erase cooking receipts or consumed inventory', async()=>{
   assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:3,state:{version:2,items:[]}})).status,426);
@@ -55,7 +68,7 @@ await check('Old v2 clients cannot erase cooking receipts or consumed inventory'
 });
 await check('An undone cooking receipt survives D1 reload without replay', async()=>{
   const undone=undoCooking(cooked.items,cooked.history,'qa-cooking','2026-10-31T09:01:00.000Z'); assert.equal(undone.error,undefined);
-  const state={...emptyState(),items:undone.items,mealRecipe:recipe,cookingHistory:undone.history};
+  const state={...emptyState(),items:[...undone.items,purchaseLaterItem],mealRecipe:recipe,cookingHistory:undone.history};
   assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:3,state})).status,200);
   const saved=await (await call(A,'/api/state')).json(); assert.equal(saved.state.items[0].stock,1000); assert.ok(saved.state.cookingHistory[0].undoneAt);
   const duplicate=applyCooking(saved.state.items,saved.state.cookingHistory,recipe,2,'qa-cooking'); assert.equal(duplicate.items[0].stock,1000); assert.equal(duplicate.history.length,1);
@@ -63,7 +76,7 @@ await check('An undone cooking receipt survives D1 reload without replay', async
 await check('An account switch cannot move cached data to another owner',async()=>assert.equal((await call(A,'/api/state','PUT',{owner:B,revision:2,state:{marker:'wrong'}})).status,403));
 await check('Cross-origin writes are rejected',async()=>assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:2,state:{}},{origin:'https://example.invalid'})).status,403));
 await check('Invalid snapshot shape is rejected',async()=>assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:2,state:[]})).status,400));
-await check('Oversized snapshots are rejected',async()=>assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:2,state:{version:3,data:'x'.repeat(1024*1024+1)}})).status,413));
+await check('Oversized snapshots are rejected',async()=>assert.equal((await call(A,'/api/state','PUT',{owner:A,revision:2,state:{...emptyState(),data:'x'.repeat(1024*1024+1)}})).status,413));
 await check('Japanese multi-item parsing preserves quantities',async()=>{const r=await call(A,'/api/parse','POST',{text:'牛乳2本と卵1パック'});assert.equal(r.status,200);const d=await r.json();assert.equal(d.items.length,2);assert.equal(d.items[0].quantity,2);assert.equal(d.items[1].unit,'パック');assert(['local-parser','workers-ai'].includes(d.engine));});
 await check('Invalid parsing input is rejected',async()=>assert.equal((await call(A,'/api/parse','POST',{text:[]})).status,400));
 await check('Unauthenticated AI calls are rejected',async()=>assert.equal((await call(null,'/api/parse','POST',{text:'牛乳'})).status,401));

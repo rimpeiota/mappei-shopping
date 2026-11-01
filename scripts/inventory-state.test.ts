@@ -16,12 +16,12 @@ test('a persisted legacy GET snapshot migrates without losing existing shopping 
   delete legacyItem.inventoryOnly; delete legacyItem.stockKnown; delete legacyItem.inventorySource;
   const payload = await new Response(JSON.stringify({ owner: 'legacy-owner', revision: 7, state: { ...emptyState(), version: 1, items: [legacyItem] } })).json() as { state: unknown; revision: number };
   const migrated = validateState(payload.state);
-  assert.ok(migrated); assert.equal(migrated.version, 3); assert.equal(migrated.mealRecipe, null);
+  assert.ok(migrated); assert.equal(migrated.version, 4); assert.equal(migrated.mealRecipe, null);
   assert.deepEqual(migrated.items[0], item); assert.equal(payload.revision, 7);
   assert.equal(migrated.items[0].inventoryOnly, false); assert.equal(migrated.items[0].stockKnown, true);
 });
 
-test('current inventory and unknown amounts survive a v3 JSON round trip', () => {
+test('current inventory and unknown amounts survive a v4 JSON round trip', () => {
   const state = { ...emptyState(), items: [newItem('冷蔵庫の牛乳', { inventoryOnly: true, stockKnown: false,
     stock: 0, spare: 0, inventorySource: '今日の確認', location: '冷蔵庫' })], mealRecipe: recipe() };
   const roundTrip = validateState(JSON.parse(JSON.stringify(state)));
@@ -67,7 +67,7 @@ test('recipe-only anonymous notes count as data and merge without discarding a l
 test('a legacy dirty cache cannot erase a newer recipe after reload even when revisions match', () => {
   // An old client can reject v2 on GET and cache an empty v1 interpretation at revision 7.
   const restored = validateShoppingCache({ state: { ...emptyState(), version: 1 }, revision: 7, dirty: true });
-  assert.ok(restored); assert.equal(restored.state.version, 3); assert.equal(restored.legacyDirty, true);
+  assert.ok(restored); assert.equal(restored.state.version, 4); assert.equal(restored.legacyDirty, true);
   const cloud = { ...emptyState(), mealRecipe: recipe(), items: [newItem('保存済みの牛乳')] };
   assert.equal(cacheNeedsReview(restored, cloud, 7), true);
   // A new local edit/persist must not erase the provenance flag before a confirmed choice.
@@ -114,7 +114,7 @@ test('a purchase cannot turn an unknown preexisting current amount into a confir
 test('v2 snapshots migrate with their recipe and no cooking history', () => {
   const old = { ...emptyState(), version: 2, mealRecipe: recipe(), items: [newItem('牛乳', { stock: 700, unit: 'ml' })] };
   const migrated = validateState(JSON.parse(JSON.stringify(old)))!;
-  assert.equal(migrated.version, 3); assert.deepEqual(migrated.cookingHistory, []);
+  assert.equal(migrated.version, 4); assert.deepEqual(migrated.cookingHistory, []);
   assert.deepEqual(migrated.mealRecipe, old.mealRecipe); assert.deepEqual(migrated.items, old.items);
 });
 
@@ -142,7 +142,7 @@ test('unreadable cloud snapshots remain failures instead of becoming an empty li
   const item = newItem('消してはいけない商品', { id: 'keep-me' });
   const valid = { ...emptyState(), items: [item], mealRecipe: recipe() };
   const inputs = [
-    { ...valid, version: 4 },
+    { ...valid, version: 5 },
     { ...valid, items: [item, { ...item }] },
     { ...valid, cookingHistory: [{ id: 'malformed' }] },
   ];

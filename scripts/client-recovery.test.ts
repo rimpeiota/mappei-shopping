@@ -5,7 +5,7 @@ const { emptyState, newItem } = await import(new URL('../lib/client-model.ts', i
 import type { RecoveryStorage } from '../lib/client-recovery';
 
 const PREFIX = 'mappei-shopping-v1';
-const cache = (name: string, version = 3) => JSON.stringify({ state: { ...emptyState(), version, items: [newItem(name)] }, revision: 4, dirty: true });
+const cache = (name: string, version = 4) => JSON.stringify({ state: { ...emptyState(), version, items: [newItem(name)] }, revision: 4, dirty: true });
 function storage(values: Record<string, string>): RecoveryStorage {
   const keys = Object.keys(values);
   return { length: keys.length, key: index => keys[index] ?? null, getItem: key => values[key] ?? null };
@@ -85,20 +85,20 @@ test('failed individual key enumeration and disappearing values are recorded whi
   assert.equal(scan.entries[0].state!.items[0].name, '三つ目');
 });
 
-test('v1 and v2 caches and direct legacy states can be previewed without changing their raw originals', () => {
-  for (const version of [1, 2]) {
+test('v1, v2, and v3 caches and direct legacy states can be previewed without changing their raw originals', () => {
+  for (const version of [1, 2, 3]) {
     const raw = cache(`版${version}の棚`, version);
     const direct = JSON.stringify({ ...emptyState(), version, items: [newItem(`直接保存${version}`)] });
     const scan = scanRecoveryStorage(storage({ [PREFIX]: raw, [`${PREFIX}:anonymous`]: direct }));
     assert.equal(scan.entries[0].format, 'cache'); assert.equal(scan.entries[0].raw, raw);
-    assert.equal(scan.entries[0].state!.version, 3); assert.equal(scan.entries[0].state!.items[0].name, `版${version}の棚`);
+    assert.equal(scan.entries[0].state!.version, 4); assert.equal(scan.entries[0].state!.items[0].name, `版${version}の棚`);
     assert.equal(scan.entries[1].format, 'state'); assert.equal(scan.entries[1].raw, direct);
     assert.equal(scan.entries[1].revision, null); assert.equal(scan.entries[1].dirty, null);
   }
 });
 
 test('malformed envelopes and unknown state versions are not misidentified as direct shopping states', () => {
-  const inputs = [{ ...emptyState(), state: null }, { ...emptyState(), revision: 9 }, { ...emptyState(), dirty: false }, { ...emptyState(), version: 4 }, { unrelated: true }];
+  const inputs = [{ ...emptyState(), state: null }, { ...emptyState(), revision: 9 }, { ...emptyState(), dirty: false }, { ...emptyState(), version: 5 }, { unrelated: true }];
   for (const input of inputs) {
     const raw = JSON.stringify(input);
     const entry = scanRecoveryStorage(storage({ [PREFIX]: raw })).entries[0];

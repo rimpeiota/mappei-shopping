@@ -161,7 +161,8 @@ export function compareFood(recipe: FoodRecipe, items: ShoppingItem[], targetSer
         else have = sum;
       } else stockUnknown = true;
 
-      if (item.inventoryOnly || completeStatuses.has(item.status)) continue;
+      // A saved future candidate is not an errand to buy this recipe's missing amount.
+      if (item.purchaseLater || item.inventoryOnly || completeStatuses.has(item.status)) continue;
       if (!validAmount(item.quantity) || !validAmount(item.purchasedQuantity)) { plannedUnknown = true; continue; }
       const remaining = cleanNumber(Math.max(0, item.quantity - item.purchasedQuantity));
       if (remaining === 0) continue;
