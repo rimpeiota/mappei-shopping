@@ -48,11 +48,13 @@ function literal(prefix: string, body: Uint8Array, tag: string) {
 
 test('probe accepts a short data keyword and recent calendar date, rejects source selection, controls and oversized input', async () => {
   assert.deepEqual(await readProbeInput(request(valid), now), valid);
+  assert.deepEqual(await readProbeInput(request({ ...valid, uids: [7,7,9] }), now), { ...valid, uids: [7,9] });
   for (const value of [null, [], { ...valid, owner: 'someone' }, { ...valid, mailbox: 'Sent' }, { ...valid, url: 'https://evil.test' },
     { ...valid, keyword: 'x' }, { ...valid, keyword: '!!' }, { ...valid, keyword: 'a\r\nLOGIN x' }, { ...valid, keyword: 'x'.repeat(3000) },
     { ...valid, since: '2026-10-01' }, { ...valid, since: '2026-11-04' }, { ...valid, since: '2026-02-30' },
     { ...valid, beforeUid: -1 }, { ...valid, beforeUid: 4294967296 },
-    { ...valid, trackingDigests: ['raw-private-tracking'] }, { ...valid, trackingDigests: Array(6).fill('a'.repeat(64)) }]) {
+    { ...valid, trackingDigests: ['raw-private-tracking'] }, { ...valid, trackingDigests: Array(6).fill('a'.repeat(64)) },
+    { ...valid, uids: [0] }, { ...valid, uids: [] }, { ...valid, uids: Array(6).fill(7) }, { ...valid, uids: [7], beforeUid: 9 }]) {
     assert.equal(await readProbeInput(request(value), now), null);
   }
 });
@@ -85,11 +87,11 @@ test('probe emits only keyword evidence and keeps durable collection cursors, ev
   const socket = fakeSocket((command, tag) => {
     if (command.startsWith('LOGIN ')) return `${tag} OK login\r\n`;
     if (command.startsWith('EXAMINE ')) return `* OK [UIDVALIDITY 999] valid\r\n${tag} OK examined\r\n`;
-    if (command.startsWith('UID SEARCH ')) return `* SEARCH 7\r\n${tag} OK searched\r\n`;
+    if (command.startsWith('UID SEARCH ')) throw new Error('Exact UID probes must not search a mailbox');
     if (command.includes('RFC822.SIZE')) return literal(`* 1 FETCH (UID 7 RFC822.SIZE ${mail.length} INTERNALDATE "3-Nov-2026 18:00:00 +0900" BODY[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID DATE)] `, mail, tag);
     return literal('* 1 FETCH (UID 7 BODY[] ', mail, tag);
   });
-  const result = await probeMailbox(env, valid, () => new ReadOnlyImap(socket), now);
+  const result = await probeMailbox(env, { ...valid, uids: [7] }, () => new ReadOnlyImap(socket), now);
   assert.equal(result.result, 'success'); assert.equal(result.matches?.length, 1); assert.equal(result.matches?.[0].confirmed, false);
   assert.deepEqual(sqlite.prepare('SELECT * FROM collector_state').get(), before);
   assert.equal(sqlite.prepare('SELECT COUNT(*) AS n FROM commerce_events').get()!.n, 0);

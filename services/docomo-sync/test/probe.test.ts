@@ -33,8 +33,8 @@ test('projection exposes only fixed hints, hashes and canonical public product U
   ].join('\n')), source);
   assert.deepEqual(Object.keys(result).sort(), [
     'messageDigest', 'uid', 'receivedAtISO', 'merchantHint', 'carrierHint', 'keywordMentioned',
-    'subjectOrderRelated', 'kindHint', 'hasText', 'hasHtml', 'orderIdDigests', 'trackingNumberDigests', 'rakutenProductKeys',
-    'explicitQuantitySeen', 'authenticationHints', 'confirmed',
+    'subjectOrderRelated', 'kindHint', 'subjectKindHint', 'hasText', 'hasHtml', 'orderIdDigests', 'trackingNumberDigests', 'rakutenProductKeys',
+    'quantityCandidates', 'explicitQuantitySeen', 'authenticationHints', 'confirmed',
   ].sort());
   assert.match(result.messageDigest, /^[0-9a-f]{64}$/u);
   assert.match(result.orderIdDigests[0], /^[0-9a-f]{64}$/u);
@@ -159,7 +159,9 @@ test('labelled tracking hashes join shipment and delivery without leaking origin
 });
 
 test('tracking extraction requires an explicit label and a complete ten-to-fourteen-digit value', async () => {
-  for (const label of ['お問い合わせ伝票番号', 'お問い合わせ番号', '送り状番号', '伝票番号', '追跡番号', 'tracking number']) {
+  for (const label of ['お問い合わせ伝票番号', 'お問い合わせ番号', 'お問合せ番号', 'お問合せ伝票番号',
+    '送り状番号', '伝票番号', '追跡番号', 'tracking number', '[お問い合わせ番号]', '【お問合せ番号】',
+    '送状No', '送り状No.', '[伝票No.]', 'お荷物伝票番号']) {
     const evidence = await inspectMailEvidence(mail('配送状況', `${label}: 1234567890\n${label}: １２３４５６７８９０１２３４`), source);
     assert.equal(evidence.trackingNumberDigests.length, 2, label);
   }
@@ -168,6 +170,7 @@ test('tracking extraction requires an explicit label and a complete ten-to-fourt
     '注文番号: 123456-20261103-12345', '1234-5678-9012',
     'お問い合わせ番号: 123456789', '追跡番号: 123456789012345',
     '伝票番号: 1234-5678-9012-345', 'tracking number: 123456789012abc', '追跡番号: 123456789012-',
+    'お問い合わせ: 090-1234-5678',
     '追跡番号: ' + '1'.repeat(100),
   ]) {
     assert.deepEqual((await inspectMailEvidence(mail('配送状況', text), source)).trackingNumberDigests, [], text);
@@ -183,6 +186,8 @@ test('product links discard personal endpoints, unsafe hosts, attributes and que
     'https://item.rakuten.co.jp.evil.test/shop-name/item-002/',
     'http://item.rakuten.co.jp/shop-name/item-003/',
     'https://item.rakuten.co.jp:444/shop-name/item-004/',
+    'http://item.rakuten.co.jp:80/shop-name/item-007/',
+    'https://item.rakuten.co.jp:443/shop-name/item-008/',
     'https://item.rakuten.co.jp/shop-name/item-005/orders/private/',
     'https://item.rakuten.co.jp/shop-name/private@example.test/',
     'https://item.rakuten.co.jp/shop-name/item%2Fprivate/',
@@ -190,7 +195,37 @@ test('product links discard personal endpoints, unsafe hosts, attributes and que
     'https://my.rakuten.co.jp/order/private/?token=PRIVATE-TOKEN',
   ].join('\n');
   assert.deepEqual((await inspectMailEvidence(mail('商品案内', content), source)).rakutenProductKeys,
-    ['https://item.rakuten.co.jp/shop-name/item-001/']);
+    ['https://item.rakuten.co.jp/shop-name/item-001/', 'https://item.rakuten.co.jp/shop-name/item-003/']);
+});
+
+test('quantity candidates require explicit bracket labels or complete price-times-unit syntax', async () => {
+  for (const text of ['[個数] 1', '【数量】：１', '(注文数) = 1', '1,234(円) x 1 (個)', '999円×1(個)']) {
+    const result = await inspectMailEvidence(mail('ご注文内容ご確認', text), source);
+    assert.deepEqual(result.quantityCandidates, [1], text);
+    assert.equal(result.explicitQuantitySeen, true); assert.equal(result.confirmed, false);
+  }
+  const two = await inspectMailEvidence(mail('注文確認', '[個数] 2\n【数量】2\n1999(円) x 3 (個)\n数量:9999'), source);
+  assert.deepEqual(two.quantityCandidates, [2, 3, 9999]);
+  for (const text of ['6点テストクリップ', '[個数] 0', '[個数] -1', '[個数] 10000', '数量:1.5',
+    'quantity6', '金額:1234円', '1234 x 1 (個)', '1234円 x 1', '1234円 x 10000(個)', '注文番号:123456-20261103-12345']) {
+    const result = await inspectMailEvidence(mail('商品案内', text), source);
+    assert.deepEqual(result.quantityCandidates, [], text); assert.equal(result.explicitQuantitySeen, false);
+  }
+  const bounded = await inspectMailEvidence(mail('注文確認', Array.from({ length: 25 }, (_, index) => `[個数] ${index + 1}`).join('\n')), source);
+  assert.equal(bounded.quantityCandidates.length, 20);
+});
+
+test('subject hints stay separate from cancellation wording in body boilerplate', async () => {
+  const shipment = await inspectMailEvidence(mail('商品発送のご連絡', '6点テストクリップ\n注文をキャンセルする場合はご連絡ください。'), source);
+  assert.equal(shipment.subjectKindHint, 'shipped');
+  assert.equal(shipment.kindHint, 'cancelled');
+  assert.equal(shipment.confirmed, false);
+  for (const subject of ['ご注文内容ご確認', 'ご注文内容のご確認']) {
+    const ordered = await inspectMailEvidence(mail(subject, ''), source);
+    assert.equal(ordered.subjectKindHint, 'ordered'); assert.equal(ordered.confirmed, false);
+  }
+  const planned = await inspectMailEvidence(mail('商品発送予定のご連絡', '配達が完了しました。'), source);
+  assert.equal(planned.subjectKindHint, 'review'); assert.equal(planned.kindHint, 'delivered');
 });
 
 test('encoded MIME subjects and normalized keywords work without returning subject text', async () => {

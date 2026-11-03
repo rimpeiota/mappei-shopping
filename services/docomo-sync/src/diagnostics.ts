@@ -2,7 +2,7 @@ import { CollectorError, LOOKBACK_DAYS, MAX_MAIL_BYTES, ReadOnlyImap } from './i
 import { inspectMailEvidence, type MailEvidence } from './probe.ts';
 import type { Env } from './service.ts';
 
-export type ProbeInput = { keyword: string; since: string; beforeUid: number; trackingDigests: string[] };
+export type ProbeInput = { keyword: string; since: string; beforeUid: number; trackingDigests: string[]; uids?: number[] };
 
 /** Fixed mailbox, bounded dates, and data-only keywords. No caller-supplied IMAP commands. */
 export async function readProbeInput(request: Request, now = Date.now()): Promise<ProbeInput | null> {
@@ -31,7 +31,7 @@ export async function readProbeInput(request: Request, now = Date.now()): Promis
     const value: unknown = JSON.parse(text);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const body = value as Record<string, unknown>;
-    if (Object.keys(body).some(key => !['keyword', 'since', 'beforeUid', 'trackingDigests'].includes(key))) return null;
+    if (Object.keys(body).some(key => !['keyword', 'since', 'beforeUid', 'trackingDigests', 'uids'].includes(key))) return null;
     if (typeof body.keyword !== 'string' || body.keyword.trim().length < 2 || body.keyword.length > 64 || /[\x00-\x1f\x7f]/u.test(body.keyword)) return null;
     if (body.keyword.normalize('NFKC').replace(/[\p{P}\p{Z}\s]/gu, '').length < 2) return null;
     if (typeof body.since !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(body.since)) return null;
@@ -42,7 +42,11 @@ export async function readProbeInput(request: Request, now = Date.now()): Promis
     if (!Number.isSafeInteger(beforeUid) || (beforeUid as number) < 0 || (beforeUid as number) > 0xffffffff) return null;
     const trackingDigests = body.trackingDigests ?? [];
     if (!Array.isArray(trackingDigests) || trackingDigests.length > 5 || trackingDigests.some(value => typeof value !== 'string' || !/^[a-f0-9]{64}$/u.test(value))) return null;
-    return { keyword: body.keyword.trim(), since: body.since, beforeUid: beforeUid as number, trackingDigests: [...new Set(trackingDigests)] as string[] };
+    const uids = body.uids;
+    if (uids !== undefined && (!Array.isArray(uids) || uids.length < 1 || uids.length > 5 || beforeUid !== 0
+      || uids.some(value => !Number.isSafeInteger(value) || value <= 0 || value > 0xffffffff))) return null;
+    return { keyword: body.keyword.trim(), since: body.since, beforeUid: beforeUid as number, trackingDigests: [...new Set(trackingDigests)] as string[],
+      ...(uids === undefined ? {} : { uids: [...new Set(uids as number[])] }) };
   } catch { return null; }
   finally {
     if (timer !== undefined) clearTimeout(timer);
@@ -66,7 +70,8 @@ export async function probeMailbox(env: Env, input: ProbeInput, open: () => Read
     await imap.login(env.DOCOMO_ACCOUNT_ID!, env.DOCOMO_IMAP_PASSWORD!);
     await imap.examine(env.MAILBOX || 'INBOX');
     const since = Math.max(Date.parse(input.since + 'T00:00:00.000Z'), now - LOOKBACK_DAYS * 86400000);
-    const page = await imap.searchRecent(new Date(since), input.beforeUid);
+    const page = input.uids ? { uids: [...input.uids].sort((a, b) => b - a), limited: false }
+      : await imap.searchRecent(new Date(since), input.beforeUid);
     const matches: MailEvidence[] = [];
     let checkedUids = 0, relatedCount = 0, bodyReads = 0, skippedLarge = 0, nextBeforeUid = input.beforeUid;
     for (const uid of page.uids) {

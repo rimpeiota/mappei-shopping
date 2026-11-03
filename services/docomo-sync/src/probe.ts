@@ -19,6 +19,8 @@ export type MailEvidence = {
   keywordMentioned: boolean;
   subjectOrderRelated: boolean;
   kindHint: 'ordered' | 'shipped' | 'delivered' | 'cancelled' | 'returned' | 'review';
+  /** Separate from body boilerplate; still an unverified diagnostic hint. */
+  subjectKindHint: MailEvidence['kindHint'];
   hasText: boolean;
   hasHtml: boolean;
   orderIdDigests: string[];
@@ -26,6 +28,8 @@ export type MailEvidence = {
   trackingNumberDigests: string[];
   /** Public catalog URLs only, with query strings and fragments removed. */
   rakutenProductKeys: string[];
+  /** Only explicitly labelled quantities; never inferred from the product name. */
+  quantityCandidates: number[];
   explicitQuantitySeen: boolean;
   /** Header mentions can be forged; these are not verified authentication results. */
   authenticationHints: { dkimPassMentioned: boolean; spfPassMentioned: boolean };
@@ -94,10 +98,13 @@ function carrierHint(domain: string, visible: string): MailEvidence['carrierHint
 
 function productKeys(content: string): string[] {
   const results = new Set<string>();
-  for (const match of content.matchAll(/https:\/\/item\.rakuten\.co\.jp[^\s<>"'）)\]}]*/giu)) {
+  for (const match of content.matchAll(/https?:\/\/item\.rakuten\.co\.jp[^\s<>"'）)\]}]*/giu)) {
     try {
-      const url = new URL(decodeEntities(match[0]));
-      if (url.protocol !== 'https:' || url.hostname !== 'item.rakuten.co.jp' || url.username || url.password || url.port) continue;
+      const link = decodeEntities(match[0]);
+      // Reject explicit ports, even when URL would normalize a default :80/:443 away.
+      if (!/^https?:\/\/item\.rakuten\.co\.jp\//iu.test(link)) continue;
+      const url = new URL(link);
+      if (!['https:', 'http:'].includes(url.protocol) || url.hostname !== 'item.rakuten.co.jp' || url.username || url.password || url.port) continue;
       const path = url.pathname.match(/^\/([a-z0-9][a-z0-9_-]{0,79})\/([a-z0-9][a-z0-9_.-]{0,159})\/?$/iu);
       if (!path || path[1] === '.' || path[2] === '.' || path[2] === '..') continue;
       results.add(`https://item.rakuten.co.jp/${path[1].toLowerCase()}/${path[2]}/`);
@@ -117,9 +124,21 @@ function kindHint(content: string): MailEvidence['kindHint'] {
   if (/キャンセル(?:が|を)?(?:完了|承り|受け付け)|注文.{0,12}キャンセル|order.{0,20}cancel(?:led|ed)/iu.test(unquoted)) return 'cancelled';
   if (/返品(?:を|が)?(?:受け付け|完了)|return.{0,20}(?:received|complete)/iu.test(unquoted)) return 'returned';
   if (/(?:配達|お届け|配送|投函)(?:が|は)?(?:完了|済み)|(?:was|has been) delivered|delivery (?:is )?complete/iu.test(unquoted)) return 'delivered';
-  if (/(?:発送|出荷)(?:が|を)?(?:完了|いたしました|しました)|発送のお知らせ|(?:was|has been) shipped|shipping confirmation/iu.test(unquoted)) return 'shipped';
-  if (/ご注文(?:を|が|ありがとう)|注文(?:確認|を受け|を承)|受注確認|order confirmation/iu.test(unquoted)) return 'ordered';
+  if (/(?:発送|出荷)(?:が|を)?(?:完了|いたしました|しました)|発送のお知らせ|商品発送のご連絡|(?:was|has been) shipped|shipping confirmation/iu.test(unquoted)) return 'shipped';
+  if (/ご注文(?:を|が|ありがとう|内容(?:の)?ご?確認)|注文(?:確認|を受け|を承)|受注確認|order confirmation/iu.test(unquoted)) return 'ordered';
   return 'review';
+}
+
+function quantityCandidates(content: string): number[] {
+  const values = new Set<number>();
+  const add = (digits: string) => {
+    const value = Number(digits);
+    if (Number.isInteger(value) && value >= 1 && value <= 9999 && values.size < MAX_MATCHES) values.add(value);
+  };
+  for (const match of content.matchAll(/(?:ご?注文(?:数量|個数|数)|購入(?:数量|個数|数)|数量|個数|\bquantity\b|\bqty\b)\s*(?:[\]】)]\s*)?(?:[:=]\s*)?([0-9]{1,4})(?![0-9.,-])/giu)) add(match[1]);
+  // A complete price/currency and unit form is required; a name such as “6点” cannot match.
+  for (const match of content.matchAll(/(?<![0-9.,])(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]{1,9})\s*(?:\(\s*円\s*\)|円)\s*[x×]\s*([0-9]{1,4})(?![0-9.,-])\s*\(\s*個\s*\)/giu)) add(match[1]);
+  return [...values].sort((a, b) => a - b);
 }
 
 /**
@@ -148,7 +167,7 @@ export async function inspectMailEvidence(raw: Uint8Array, source: MailEvidenceS
     if (orderIds.size === MAX_MATCHES) break;
   }
   const trackingNumbers = new Set<string>();
-  for (const match of normalized.matchAll(/(?:お問い合わせ(?:伝票)?番号|送り状番号|伝票番号|追跡番号|\btracking[ ]+number)\s*[:#]?\s*([0-9][0-9 -]{0,63})(?![0-9a-z -])/gu)) {
+  for (const match of normalized.matchAll(/(?:お(?:問い合わせ|問合せ)(?:伝票)?(?:番号|no\.?)|お荷物伝票(?:番号|no\.?)|(?:送り状|送状|伝票)(?:番号|no\.?)|追跡番号|\btracking[ ]+number)\s*(?:[\]】)]\s*)?[:#]?\s*([0-9][0-9 -]{0,63})(?![0-9a-z -])/gu)) {
     const number = match[1].trim();
     if (!/^[0-9]+(?:[ -]+[0-9]+)*$/u.test(number)) continue;
     const digits = number.replace(/[ -]/gu, '');
@@ -161,6 +180,7 @@ export async function inspectMailEvidence(raw: Uint8Array, source: MailEvidenceS
   const receivedSpf = mail.headers.filter(header => header.key.toLowerCase() === 'received-spf').map(header => header.value).join('\n');
   const messageId = mail.messageId?.trim();
   const identity = messageId && messageId.length <= 1000 ? `message:${messageId}` : `uid:${source.uid}:${source.internalDate}`;
+  const quantities = quantityCandidates(normalized);
   return {
     messageDigest: await digestKey(`${source.integrationId}\nprobe-${identity}`),
     uid: source.uid,
@@ -170,13 +190,15 @@ export async function inspectMailEvidence(raw: Uint8Array, source: MailEvidenceS
     keywordMentioned: keywordForm(visible).includes(keywordForm(source.keyword)),
     subjectOrderRelated: ORDER_WORDS.test(subject),
     kindHint: kindHint(visible),
+    subjectKindHint: kindHint(subject),
     hasText: Boolean(mail.text?.trim()),
     hasHtml: Boolean(mail.html?.trim()),
     orderIdDigests: (await Promise.all([...orderIds].map(id => digestKey(`${source.integrationId}\nprobe-order:${id}`)))).sort(),
     trackingNumberDigests: (await Promise.all([...trackingNumbers].map(digits => digestKey(`${source.integrationId}\nprobe-tracking:${digits}`)))).sort(),
     rakutenProductKeys,
     // A product name such as “6点テストクリップ” is not a quantity field.
-    explicitQuantitySeen: /(?:ご?注文(?:数量|個数|数)|購入(?:数量|個数|数)|数量|個数|\bquantity|\bqty)\s*(?:[:：=]\s*)?[0-9]+(?![0-9])/iu.test(normalized),
+    quantityCandidates: quantities,
+    explicitQuantitySeen: quantities.length > 0,
     authenticationHints: {
       dkimPassMentioned: /(?:^|[;\s])dkim\s*=\s*pass(?:[;\s(]|$)/iu.test(auth),
       spfPassMentioned: /(?:^|[;\s])spf\s*=\s*pass(?:[;\s(]|$)/iu.test(auth) || /^\s*pass(?:\s|\()/imu.test(receivedSpf),
