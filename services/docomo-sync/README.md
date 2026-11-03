@@ -28,6 +28,8 @@ Sitesサーバー側で、認証済みの`requireOwner()`と固定のintegration
 - IMAP認証失敗は1回で停止し、以後のCronは接続しません。認証情報を直してから管理者が停止状態を解除します。
 - `GET /v1/events?cursor=0&limit=50`がイベント読取API。Bearerキー必須、最大100件、任意ownerや取得先URLは指定できません。取得は非破壊で、カーソルとイベントIDを利用側が保持します。
 - 初回検証用の`POST /v1/collect`は、読取キーとは別の`COLLECT_TOKEN`が必要です。入力本文・クエリ・任意コマンドは受け付けません。Cronを有効にする前の1回の取得確認に使用します。未設定ではメールへ接続しません。
+- 管理者用の`POST /v1/probe`は同じ取得用キーだけで使える、実例の限定診断です。短い商品キーワード・直近30日以内の開始日・逆順UID境界だけを受け付け、固定INBOXを新しい順に最大100 UID/本文20件まで確認します。バックフィルのカーソルや保存イベントは変えません。キーワードに一致した通知の分類ヒント・注文番号のダイジェスト・公開商品キーだけを返し、本文/件名/宛先/住所/注文番号原値を返しません。認証結果の文言も診断ヒントであり、全結果は未確認です。
+- 商品名のない配達通知は、先に得た追跡番号ダイジェストを最大5個指定し、一致する場合だけ診断結果に含められます。追跡番号は明示ラベルのある10〜14桁だけをメモリ内で正規化してダイジェスト化し、原値を返しません。追跡一致だけで商品行や数量の確定・自動完了はしません。
 - 本文のないPOSTが空のストリームとして届く場合も受け付けます。本文がある要求・終端しないストリームは、上限1秒でメール接続前に拒否します。認証停止の確認と接続用ロックの取得は同じ更新条件にし、並行実行でも認証失敗後の再接続を防ぎます。
 
 イベント型はアプリの`lib/commerce-model.ts`の`NormalizedCommerceEvent`と同じ構造です。商品・注文行・配送・数量の対応を安全に確定できないため、関連する項目は`null`です。取得した`kind: delivered`も文面上の候補に過ぎず、`explicitConfirmed: false`を外してはいけません。
@@ -71,6 +73,7 @@ npm run dry-run
 
 - [ドコモ：その他のメールアプリからの利用](https://www.docomo.ne.jp/service/docomo_mail/other/)
 - [ドコモ：IMAP専用パスワード](https://www.docomo.ne.jp/faq/detail?categoryId=136&faqId=248285)
+- [ドコモ：IMAP仕様 2026-01-26](https://www.docomo.ne.jp/binary/pdf/service/developer/smart_phone/application/imap/mail_imap_spec_260126.pdf)（検索はSINCEとUIDを使用。FROM/SUBJECT/TEXT/BODYによる検索は非対応のため、商品キーワードは取得した候補のメモリ内だけで確認）
 - [Cloudflare：TCP sockets](https://developers.cloudflare.com/workers/runtime-apis/tcp-sockets/)
 - [Cloudflare：Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
 - [Cloudflare：Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)

@@ -105,6 +105,21 @@ export class ReadOnlyImap {
       .filter(Boolean).map(Number)))].filter(uid => Number.isSafeInteger(uid) && uid > afterUid && uid <= 0xffffffff).sort((a, b) => a - b);
     return { uids: uids.slice(0, MAX_UIDS), limited: uids.length > MAX_UIDS };
   }
+  /** Diagnostic paging is independent of the durable oldest-first collection cursor. */
+  async searchRecent(since: Date, beforeUid = 0): Promise<{ uids: number[]; limited: boolean }> {
+    if (!Number.isSafeInteger(beforeUid) || beforeUid < 0 || beforeUid > 0xffffffff || !Number.isFinite(since.getTime())) {
+      throw new CollectorError('invalid_cursor');
+    }
+    if (beforeUid === 1) return { uids: [], limited: false };
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const date = `${since.getUTCDate()}-${months[since.getUTCMonth()]}-${since.getUTCFullYear()}`;
+    const range = beforeUid > 0 ? `1:${beforeUid - 1}` : '1:*';
+    const reply = await this.command(`UID SEARCH SINCE ${date} UID ${range}`);
+    const uids = [...new Set(reply.lines.filter(line => /^\* SEARCH(?: |$)/u.test(line)).flatMap(line => line.slice(8).trim().split(/\s+/u)
+      .filter(Boolean).map(Number)))].filter(uid => Number.isSafeInteger(uid) && uid > 0 && uid <= 0xffffffff && (!beforeUid || uid < beforeUid))
+      .sort((a, b) => b - a);
+    return { uids: uids.slice(0, MAX_UIDS), limited: uids.length > MAX_UIDS };
+  }
   async headers(uid: number): Promise<{ bytes: Uint8Array; size: number; internalDate: number }> {
     this.validUid(uid);
     const reply = await this.command(`UID FETCH ${uid} (UID RFC822.SIZE INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID DATE)])`);

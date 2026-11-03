@@ -1,5 +1,6 @@
 import { CollectorError, LOOKBACK_DAYS, MAX_MAIL_BYTES, ReadOnlyImap } from './imap.ts';
 import { inspectCandidate, normalizeMail, type NormalizedCommerceEvent } from './event.ts';
+import { probeMailbox, readProbeInput } from './diagnostics.ts';
 
 export type Env = {
   DB?: D1Database;
@@ -113,10 +114,23 @@ async function hasEmptyBody(request: Request): Promise<boolean> {
   }
 }
 
-/** Event-read only: no caller can trigger polling, issue IMAP commands, supply an owner, or mutate mail. */
+/** Separate read/admin APIs; callers cannot supply an owner, connection target, or IMAP command. */
 export async function handleRequest(request: Request, env: Env, open?: () => ReadOnlyImap): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === '/health' && request.method === 'GET') return response({ service: 'docomo-sync-prototype', mode: 'review_only' });
+  if (url.pathname === '/v1/probe') {
+    if (request.method !== 'POST') return response({ error: 'method_not_allowed' }, 405);
+    if (!env.COLLECT_TOKEN || env.COLLECT_TOKEN.length < 32 || env.COLLECT_TOKEN === env.EVENT_READ_TOKEN
+      || !await authorized(request, env.COLLECT_TOKEN)) return response({ error: 'unauthorized' }, 401);
+    if (url.search) return response({ error: 'invalid_query' }, 400);
+    const input = await readProbeInput(request);
+    if (!input) return response({ error: 'invalid_query' }, 400);
+    if (!configured(env) || !open) return response({ error: 'not_configured' }, 503);
+    try {
+      const result = await probeMailbox(env, input, open);
+      return response(result, result.result === 'success' ? 200 : result.result === 'already_running' ? 409 : 503);
+    } catch { return response({ error: 'probe_failed' }, 503); }
+  }
   if (url.pathname === '/v1/collect') {
     if (request.method !== 'POST') return response({ error: 'method_not_allowed' }, 405);
     if (!env.COLLECT_TOKEN || env.COLLECT_TOKEN.length < 32 || env.COLLECT_TOKEN === env.EVENT_READ_TOKEN
