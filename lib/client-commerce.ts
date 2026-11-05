@@ -9,6 +9,7 @@ export type CommerceStatus = {
   sourceCollectorLastSuccessAt: string | null;
   sourceLimited: boolean;
   authBlocked: boolean;
+  sourceError: boolean;
 };
 
 export type CommerceSyncBoundary = {
@@ -48,11 +49,12 @@ export function readCommerceStatus(value: unknown): CommerceStatus | null {
   if (data.mode !== 'review_only' || typeof data.connected !== 'boolean'
     || !count(data.importedCount) || !count(data.reviewCount) || data.completedCount !== 0
     || !timestamp(data.lastSyncedAt) || !timestamp(data.sourceCollectorLastSuccessAt)
-    || typeof data.hasMore !== 'boolean' || typeof data.sourceLimited !== 'boolean' || typeof data.authBlocked !== 'boolean') return null;
+    || typeof data.hasMore !== 'boolean' || typeof data.sourceLimited !== 'boolean' || typeof data.authBlocked !== 'boolean'
+    || typeof data.sourceError !== 'boolean') return null;
   // Copy only the public status contract; never retain arbitrary provider fields.
   return { mode: 'review_only', connected: data.connected, importedCount: data.importedCount,
     reviewCount: data.reviewCount, completedCount: 0, lastSyncedAt: data.lastSyncedAt, hasMore: data.hasMore,
-    sourceCollectorLastSuccessAt: data.sourceCollectorLastSuccessAt, sourceLimited: data.sourceLimited, authBlocked: data.authBlocked };
+    sourceCollectorLastSuccessAt: data.sourceCollectorLastSuccessAt, sourceLimited: data.sourceLimited, authBlocked: data.authBlocked, sourceError: data.sourceError };
 }
 
 export type CommerceFailure = 'signed-out' | 'conflict' | 'unavailable' | 'invalid';

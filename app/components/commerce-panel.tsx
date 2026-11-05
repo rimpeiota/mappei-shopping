@@ -67,6 +67,7 @@ export function CommercePanel({ authenticated, blocked, getRevision }: {
       {status.hasMore && <p className="field-note">未確認の続きがあります。「通知を確認」をもう一度押すと、続きから取り込みます。</p>}
       {status.sourceLimited && <p className="field-note">メールの取得には未確認の範囲があります。すべての配送通知を取り込めた状態ではありません。</p>}
       {status.sourceCollectorLastSuccessAt && <p className="field-note">メールの最終取得 {displayTime(status.sourceCollectorLastSuccessAt)}</p>}
+      {status.sourceError && <p className="field-note" role="alert">前回のメール取得に失敗しています。保存済みの通知は確認できます。</p>}
       {status.authBlocked && <p className="field-note" role="alert">メールの認証を確認するため、新しいメールの取得を停止しています。保存済みの通知は確認できます。接続設定の確認が必要です。</p>}
       {blocked && <p className="field-note">入力中の内容を保存し、同期が完了すると通知を確認できます。</p>}
     </> : <p className="field-note">{!authenticated ? '配送通知を確認するにはログインが必要です。' : busy && !status ? '配送通知の接続を確認しています。' : error ? '配送通知の接続状況を取得できていません。' : 'このアカウントで確認できる配送通知の接続は、まだ設定されていません。'}</p>}

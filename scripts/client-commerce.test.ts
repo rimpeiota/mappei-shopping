@@ -4,7 +4,7 @@ import type { CommerceSyncBoundary } from '../lib/client-commerce';
 const { commerceSyncRevision, readCommerceStatus, requestCommerceStatus, CommerceRequestError } = await import(new URL('../lib/client-commerce.ts', import.meta.url).href) as typeof import('../lib/client-commerce');
 
 const status = () => ({ mode: 'review_only', connected: true, importedCount: 30, reviewCount: 30, completedCount: 0,
-  lastSyncedAt: null, hasMore: false, sourceCollectorLastSuccessAt: '2026-11-01T14:57:13.160Z', sourceLimited: true, authBlocked: false });
+  lastSyncedAt: null, hasMore: false, sourceCollectorLastSuccessAt: '2026-11-01T14:57:13.160Z', sourceLimited: true, authBlocked: false, sourceError: false });
 const boundary = (): CommerceSyncBoundary => ({ owner: 'account', key: 'mappei-shopping-v1:owner:account', revision: 7,
   enabled: true, dirty: false, saving: false, paused: false, held: false, storageReadBlocked: false,
   upgradeRequired: false, sharedCacheBlocked: false, sharedCacheRevision: 7, online: true, visible: true });
@@ -26,7 +26,7 @@ test('only the review status is retained; arbitrary mail and provider fields are
 
 test('invalid counters, completion claims, mode, and dates fail closed', () => {
   for (const patch of [{ mode: 'automatic' }, { importedCount: -1 }, { importedCount: 1.5 }, { reviewCount: '30' },
-    { completedCount: 1 }, { hasMore: 1 }, { sourceLimited: null }, { authBlocked: undefined },
+    { completedCount: 1 }, { hasMore: 1 }, { sourceLimited: null }, { authBlocked: undefined }, { sourceError: undefined }, { sourceError: 'private error' },
     { lastSyncedAt: 'not a date' }, { sourceCollectorLastSuccessAt: 123 }]) {
     assert.equal(readCommerceStatus({ ...status(), ...patch }), null, JSON.stringify(patch));
   }
