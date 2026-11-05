@@ -29,7 +29,7 @@ export async function fetchCommercePage(source: CommerceSource, cursor: number, 
   }, options.timeoutMs ?? 10000); });
   const read = async () => {
     const response = await (options.fetcher ?? fetch)(url.toString(), { headers: { Authorization: `Bearer ${source.token}`, Accept: 'application/json' },
-      cache: 'no-store', redirect: 'error', signal: controller.signal });
+      cache: 'no-store', redirect: 'manual', signal: controller.signal });
     if (!response.ok || response.status !== 200 || !response.headers.get('content-type')?.toLowerCase().startsWith('application/json') || !response.body) throw sourceFailure();
     const maximum = options.maxBytes ?? 512 * 1024;
     const declared = response.headers.get('content-length');

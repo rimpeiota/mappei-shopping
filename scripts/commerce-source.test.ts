@@ -33,7 +33,7 @@ test('source fetch sends its read token only to the fixed endpoint, with bounded
   let called = 0;
   const result = await fetchCommercePage(source, 0, { fetcher: async (input, init) => {
     called += 1; assert.equal(String(input), `${DOCOMO_EVENT_ENDPOINT}?cursor=0&limit=100`);
-    assert.equal(init?.redirect, 'error'); assert.equal(init?.cache, 'no-store');
+    assert.equal(init?.redirect, 'manual'); assert.equal(init?.cache, 'no-store');
     assert.equal((init?.headers as Record<string, string>).Authorization, `Bearer ${source.token}`);
     assert.ok(init?.signal); return response(page());
   } });
@@ -97,4 +97,16 @@ test('collector failures become a fixed marker, never provider error text', () =
   assert.equal(result.collector.last_error_code, 'source_error');
   assert.equal(JSON.stringify(result).includes('synthetic-provider-detail'), false);
   assert.deepEqual(parseCommercePage(result, scope, 0), result);
+});
+
+
+test('a redirected notification source is rejected in one request without forwarding the token', async () => {
+  const destinations: string[] = [];
+  await assert.rejects(fetchCommercePage(source, 0, { fetcher: async (input, init) => {
+    destinations.push(String(input));
+    // Workers supports follow/manual; manual must expose the response for rejection.
+    if (init?.redirect !== 'manual') throw new TypeError('Unsupported Worker redirect mode');
+    return new Response(null, { status: 307, headers: { location: 'https://untrusted.example.invalid/collect-token' } });
+  } }));
+  assert.deepEqual(destinations, [`${DOCOMO_EVENT_ENDPOINT}?cursor=0&limit=100`]);
 });
