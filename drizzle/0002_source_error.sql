@@ -1,0 +1,1 @@
+ALTER TABLE `shopping_commerce_connections` ADD `source_error` integer DEFAULT 0 NOT NULL;

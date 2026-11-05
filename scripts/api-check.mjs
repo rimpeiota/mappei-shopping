@@ -100,6 +100,12 @@ await check('Unsupported audio MIME is rejected',async()=>assert.equal((await au
 await check('A forged audio header is rejected',async()=>assert.equal((await audioCall(A,new Uint8Array(44))).status,415));
 await check('Empty recordings are rejected',async()=>assert.equal((await audioCall(A,new Uint8Array())).status,400));
 await check('Audio over eight MiB is rejected',async()=>assert.equal((await audioCall(A,new Uint8Array(8*1024*1024+1))).status,413));
+await check('Unauthenticated commerce status and sync are rejected', async()=>{assert.equal((await call(null,'/api/commerce')).status,401);assert.equal((await call(null,'/api/commerce/sync','POST',{revision:0})).status,401);});
+await check('Unconfigured owners cannot discover a mailbox', async()=>{const r=await call(B,'/api/commerce');assert.equal(r.status,200);const d=await r.json();assert.equal(d.connected,false);assert.equal(d.importedCount,0);assert.equal(d.completedCount,0);assert.equal(JSON.stringify(d).includes('integrationId'),false);});
+await check('Cross-origin commerce sync is rejected', async()=>assert.equal((await call(A,'/api/commerce/sync','POST',{revision:0},{origin:'https://example.invalid'})).status,403));
+await check('Browser-supplied commerce events or owners are rejected', async()=>{for(const extra of [{owner:A},{events:[]},{url:'https://example.invalid'},{accountScope:'guess'},{explicitConfirmed:true}])assert.equal((await call(A,'/api/commerce/sync','POST',{revision:0,...extra})).status,400);});
+await check('Malformed commerce revisions are rejected', async()=>{for(const revision of [-1,1.2,'0',null])assert.equal((await call(A,'/api/commerce/sync','POST',{revision})).status,400);});
+await check('Unconfigured commerce sync preserves shopping snapshot', async()=>{const before=await (await call(A,'/api/state')).json();assert.equal((await call(A,'/api/commerce/sync','POST',{revision:before.revision})).status,503);assert.deepEqual(await (await call(A,'/api/state')).json(),before);});
 await mkdir('outputs',{recursive:true});
 await writeFile('outputs/api-check.json',JSON.stringify({at:new Date().toISOString(),base,passed:results.length,results},null,2));
 console.log(`${results.length}/${results.length} API checks passed`);

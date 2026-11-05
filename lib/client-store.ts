@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { cacheNeedsReview, emptyState, hasShoppingData, mergeAnonymousState, readRemoteSnapshot, validateShoppingCache, type ShoppingCache, type ShoppingState } from './client-model';
 import { createRemoteRefreshController, inspectSharedRefreshCache, type RefreshBoundary } from './client-refresh';
+import { commerceSyncRevision } from './client-commerce';
 const PREFIX = 'mappei-shopping-v1';
 const ANONYMOUS_KEY = `${PREFIX}:anonymous`;
 const LAST_OWNER_KEY = `${PREFIX}:last-owner`;
@@ -222,5 +223,11 @@ export function useShoppingStore({ holdRemoteUpdates = false }: { holdRemoteUpda
     if (dirty.current) void sync(); else setStatus('synced');
   };
   const retry = () => { if (upgradeRequired.current) { setStatus('upgrade'); return; } if (paused.current) { if (conflict) return; paused.current = false; } if (!enabled.current) void connect(); else if (dirty.current) void sync(); else void refresh(); };
-  return { state, commit, ready, status, authenticated, storageError, storageScope, previousAccountLocal, conflict, resolveConflict, capability, retry };
+  const getCommerceSyncRevision = useCallback(() => commerceSyncRevision({
+    ...inspectSharedRefreshCache(() => localStorage, key.current), owner: owner.current, key: key.current, revision: revision.current,
+    enabled: enabled.current, dirty: dirty.current, saving: saving.current, paused: paused.current,
+    held: remoteUpdatesHeld.current || hasOpenEditor(), storageReadBlocked: storageReadBlocked.current,
+    upgradeRequired: upgradeRequired.current, online: navigator.onLine, visible: document.visibilityState === 'visible',
+  }), []);
+  return { state, commit, ready, status, authenticated, storageError, storageScope, previousAccountLocal, conflict, resolveConflict, capability, retry, getCommerceSyncRevision };
 }

@@ -8,6 +8,20 @@
       "when": 1792911212611,
       "tag": "0000_massive_mercury",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793867525226,
+      "tag": "0001_easy_madame_hydra",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793867728243,
+      "tag": "0002_source_error",
+      "breakpoints": true
     }
   ]
 }
